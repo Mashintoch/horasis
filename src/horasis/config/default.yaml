@@ -1,0 +1,26 @@
+default_backend: ultralytics
+telemetry_enabled: true
+
+tiers:
+  free:
+    name: free
+    quota:
+      limit: 100
+      window_seconds: 86400
+    allowed_praxeis: [detect, classify, ocr]
+
+  pro:
+    name: pro
+    quota:
+      limit: 10000
+      window_seconds: 86400
+    allowed_praxeis: [detect, classify, ocr, face, moderate]
+
+  enterprise:
+    name: enterprise
+    quota:
+      limit: 1000000
+      window_seconds: 86400
+    allowed_praxeis: [detect, classify, ocr, face, moderate]
+
+extra: {}
