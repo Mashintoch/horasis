@@ -1,4 +1,8 @@
+"""Image and video annotation helpers for Horasis."""
+
 from __future__ import annotations
+
+# pylint: disable=import-outside-toplevel,too-many-arguments,too-many-locals,no-member,mixed-line-endings
 
 import io
 from pathlib import Path
