@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import time
+import urllib.error
 import urllib.request
 from enum import Enum
 from pathlib import Path
@@ -10,6 +12,8 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from horasis.foundation.sphalma import ValidationError
+
+logger = logging.getLogger(__name__)
 
 
 class Praxis(str, Enum):
@@ -104,14 +108,15 @@ def _check_url_is_video(url: str, *, timeout: float) -> None:
     for kwargs in attempts:
         try:
             req = urllib.request.Request(url, **kwargs)
-            with urllib.request.urlopen(req, timeout=timeout) as response:  # noqa: S310
+            with urllib.request.urlopen(req, timeout=timeout) as response:
                 content_type = response.headers.get("Content-Type")
             break
-        except Exception:
+        except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+            logger.debug(f"Failed to check URL {url} with kwargs {kwargs}: {exc}")
             continue
 
     if content_type is None:
-        return  # couldn't determine -- don't block a possibly-valid URL
+        return 
 
     normalized = content_type.split(";")[0].strip().lower()
     if normalized.startswith("video/") or normalized == "application/octet-stream":
@@ -146,7 +151,7 @@ class Kinesis(BaseModel):
         return cls(source=source, data=data)
 
     @classmethod
-    def from_url(cls, url: str, *, verify: bool = True, timeout: float = 10.0) -> "Kinesis":
+    def from_url(cls, url: str, *, verify: bool = True, timeout: float = 10.0) -> Kinesis:
         """Wrap a video URL for streaming by the backend (not downloaded here).
 
         Args:
@@ -173,7 +178,7 @@ class Kinesis(BaseModel):
         return cls(source=url, url=url)
 
     @classmethod
-    def from_source(cls, source: str) -> "Kinesis":
+    def from_source(cls, source: str) -> Kinesis:
         """Build a `Kinesis` from a string that is either a URL or a local file path."""
         if source.startswith(("http://", "https://")):
             return cls.from_url(source)
@@ -225,6 +230,22 @@ class Theoria(BaseModel):
     backend: str
     latency_ms: float
     created_at: float = Field(default_factory=lambda: time.time())
+
+
+class FaceEstimate(BaseModel):
+    """Rough, model-estimated attributes for a detected face.
+
+    These come from a computer-vision model's statistical estimate, not
+    verified facts about the person. Expect real error rates -- do not
+    treat these as ground truth, and do not use them as the sole basis
+    for any decision about a person.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    estimated_age: float | None = None
+    estimated_gender: str | None = None
+    gender_confidence: Doxa | None = None
 
 
 class Detection(BaseModel):

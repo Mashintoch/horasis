@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest import result
 
 from horasis.foundation.schemas import (
     Detection,
@@ -112,6 +111,27 @@ def _draw_boxes(
     return annotated
 
 
+def _resolve_image_output_path(output_path: str | Path | None) -> tuple[Path, dict[str, Any]]:
+    """Normalize image output targets.
+
+    If no path is given, save to the current working directory as
+    `annotated.png`.
+    If callers pass an existing directory, write `annotated.png` inside it.
+    If callers pass a path without an extension, force PNG output so Pillow
+    does not need to infer a format from the filename.
+    """
+    path = Path.cwd() / "annotated.png" if output_path is None else Path(output_path)
+    save_kwargs: dict[str, Any] = {}
+
+    if path.exists() and path.is_dir():
+        path = path / "annotated.png"
+
+    if path.suffix == "":
+        save_kwargs["format"] = "PNG"
+
+    return path, save_kwargs
+
+
 def render_detections(
     image: str | Path | bytes | Physis,
     result: DetectionResult,
@@ -136,7 +156,9 @@ def render_detections(
             distinct across calls.
         line_width: Box border thickness in pixels.
         font_size: Caption font size in points.
-        output_path: If given, also save the annotated image to this path.
+        output_path: If given, save the annotated image there. If omitted,
+            the image is saved to the current working directory as
+            `annotated.png`.
 
     Raises:
         VisualizationUnavailableError: if Pillow is not installed.
@@ -152,9 +174,9 @@ def render_detections(
         line_width=line_width,
         font_size=font_size,
     )
-    if output_path is not None:
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        annotated.save(output_path)
+    output_path, save_kwargs = _resolve_image_output_path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    annotated.save(output_path, **save_kwargs)
     return annotated
 
 
@@ -186,9 +208,9 @@ def render_faces(
         line_width=line_width,
         font_size=font_size,
     )
-    if output_path is not None:
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        annotated.save(output_path)
+    output_path, save_kwargs = _resolve_image_output_path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    annotated.save(output_path, **save_kwargs)
     return annotated
 
 
@@ -247,14 +269,14 @@ class _FfmpegVideoWriter:
 
 
 def _open_video_writer(cv2: Any, path: str, fps: float, width: int, height: int) -> Any:
-    """Open the best available video writer for `path`.
-    """
+    """Open the best available video writer for `path`."""
     try:
         import imageio  # noqa: F401
         import imageio_ffmpeg  # noqa: F401
     except ImportError:
         return _Cv2VideoWriter(cv2, path, fps, width, height)
     return _FfmpegVideoWriter(cv2, path, fps)
+
 
 def _video_capture_source(video: str | Path | bytes | Kinesis) -> tuple[Any, str | None]:
     """Normalize `video` into something `cv2.VideoCapture` can open.

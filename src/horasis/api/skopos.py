@@ -68,6 +68,7 @@ class ObjectDetector(_Capability):
         image: str | Path | bytes | Physis,
         *,
         backend: str | None = None,
+        estimate_demographics: bool = False,
         principal: Prosopon | None = None,
     ) -> DetectionResult:
         """Detect objects in `image`.
@@ -76,11 +77,23 @@ class ObjectDetector(_Capability):
             image: A file path, raw bytes, or a pre-built `Physis`.
             api_key: Caller's `horasis` API key.
             backend: Optional explicit backend name to use.
+            estimate_demographics: If True, every detection labeled
+                `"person"` also gets a `face_estimate` (rough, model-based
+                age and gender estimate) attached. Off by default -- opt in
+                per call. Requires the optional `demographics` extra:
+                `pip install horasis[demographics]`. These are statistical
+                estimates with real error rates, not verified facts; treat
+                them accordingly.
 
         Returns:
             A `DetectionResult` listing every detected object instance.
         """
-        result = self._organon.run(Praxis.DETECT, _to_physis(image), backend=backend)
+        result = self._organon.run(
+            Praxis.DETECT,
+            _to_physis(image),
+            backend=backend,
+            estimate_demographics=estimate_demographics,
+        )
         assert isinstance(result, DetectionResult)
         return result
 
@@ -90,6 +103,7 @@ class ObjectDetector(_Capability):
         *,
         api_key: str,
         backend: str | None = None,
+        estimate_demographics: bool = False,
         show_labels: bool = True,
         show_confidence: bool = True,
         output_path: str | Path | None = None,
@@ -135,7 +149,7 @@ class ObjectDetector(_Capability):
                 Install it with: pip install 'horasis[viz]'
         """
         physis = _to_physis(image)
-        result = self.detect(physis, api_key=api_key, backend=backend)
+        result = self.detect(physis, api_key=api_key, backend=backend, estimate_demographics=estimate_demographics)
         annotated = result.annotate(
             physis,
             show_labels=show_labels,
@@ -151,6 +165,7 @@ class ObjectDetector(_Capability):
         *,
         api_key: str,
         backend: str | None = None,
+        estimate_demographics: bool = False,
         show_labels: bool = True,
         show_confidence: bool = True,
         output_dir: str | Path | None = None,
@@ -212,6 +227,7 @@ class ObjectDetector(_Capability):
                     show_labels=show_labels,
                     show_confidence=show_confidence,
                     output_path=output_path,
+                    estimate_demographics=estimate_demographics,
                     **viz_options,
                 )
             )
@@ -224,6 +240,7 @@ class ObjectDetector(_Capability):
         *,
         backend: str | None = None,
         sample_every_n_frames: int = 1,
+        estimate_demographics: bool = False,
         principal: Prosopon | None = None,
     ) -> VideoDetectionResult:
         """Detect objects across a video, frame by frame.
@@ -239,6 +256,15 @@ class ObjectDetector(_Capability):
             sample_every_n_frames: Only run inference on every Nth frame
                 (1 = every frame, 2 = every other frame, etc.) -- a simple
                 way to trade detail for speed on long videos.
+            estimate_demographics: If True, every detection labeled
+                `"person"` on a processed frame also gets a `face_estimate`
+                attached (see `ObjectDetector.detect`). Off by default.
+                This only runs on frames already selected by
+                `sample_every_n_frames` -- it does not add its own
+                sampling, but it does add real per-person cost on top of
+                detection, so a higher `sample_every_n_frames` matters even
+                more with this on. Requires the optional `demographics`
+                extra: `pip install horasis[demographics]`.
 
         Returns:
             A `VideoDetectionResult` with one `FrameDetections` per
@@ -246,7 +272,9 @@ class ObjectDetector(_Capability):
 
         Raises:
             BackendUnavailableError: if the resolved backend does not
-                support video for this praxis.
+                support video for this praxis (the default Ultralytics
+                backend currently only supports video for detection, not
+                classification, OCR, face, or moderation).
         """
         kinesis = _to_kinesis(video)
         result = self._organon.run_video(
@@ -254,6 +282,7 @@ class ObjectDetector(_Capability):
             kinesis,
             backend=backend,
             sample_every_n_frames=sample_every_n_frames,
+            estimate_demographics=estimate_demographics,
         )
         assert isinstance(result, VideoDetectionResult)
         return result
@@ -272,6 +301,7 @@ class ObjectDetector(_Capability):
         text_color: tuple[int, int, int] = (255, 255, 255),
         line_width: int = 3,
         font_size: int = 16,
+        estimate_demographics: bool = False,
         principal: Prosopon | None = None,
     ) -> tuple[VideoDetectionResult, Path]:
         """Detect and annotate a video in a single decode pass.
@@ -298,6 +328,14 @@ class ObjectDetector(_Capability):
             text_color: RGB color for the caption text.
             line_width: Box border thickness in pixels.
             font_size: Caption font size in points.
+            estimate_demographics: If True, every detection labeled
+                `"person"` on a processed frame also gets a `face_estimate`
+                attached (see `ObjectDetector.detect`). Off by default.
+                Note this attaches the estimate to the returned data but
+                does not currently draw it on the annotated video -- the
+                box/label/confidence drawing is unaffected. Requires the
+                optional `demographics` extra:
+                `pip install horasis[demographics]`.
 
         Returns:
             A `(result, output_path)` tuple: the `VideoDetectionResult`
@@ -325,6 +363,7 @@ class ObjectDetector(_Capability):
             text_color=text_color,
             line_width=line_width,
             font_size=font_size,
+            estimate_demographics=estimate_demographics,
         )
         assert isinstance(result, VideoDetectionResult)
         return result, Path(out_path)

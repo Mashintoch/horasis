@@ -138,6 +138,7 @@ class UltralyticsAdapter(Mechane):
         text_color: tuple[int, int, int] = (255, 255, 255),
         line_width: int = 3,
         font_size: int = 16,
+        estimate_demographics: bool = False,
         **options: object,
     ) -> tuple[VideoDetectionResult, Any]:
         """Single decode pass: run inference and draw+write, reusing the
@@ -147,13 +148,13 @@ class UltralyticsAdapter(Mechane):
         import os
         from pathlib import Path as _Path
 
-        from horasis.viz import (  # noqa: PLC0415 -- lazy, optional `viz` extra
+        from horasis.viz import (
             _draw_boxes,
             _load_cv2,
         )
 
         cv2 = _load_cv2()
-        from PIL import Image as PILImage  # noqa: PLC0415 -- lazy, optional `viz` extra
+        from PIL import Image as PILImage
 
         YOLO = self._load_ultralytics()
         if self._detect_model is None:
@@ -178,7 +179,7 @@ class UltralyticsAdapter(Mechane):
                 if writer is None:
                     height, width = orig_bgr.shape[:2]
                     writer = _open_video_writer(cv2, str(out_path), fps, width, height)
-                    
+
                 detections: list[Detection] = []
                 if idx % sample_every_n_frames == 0:
                     names = raw.names
@@ -186,17 +187,23 @@ class UltralyticsAdapter(Mechane):
                         xyxy = box.xyxy[0].tolist()
                         cls_id = int(box.cls[0])
                         conf = float(box.conf[0])
-                        detections.append(
-                            Detection(
-                                label=names.get(cls_id, str(cls_id))
-                                if isinstance(names, dict)
-                                else str(cls_id),
-                                confidence=Doxa(value=conf),
-                                box=BoundingBox(
-                                    x_min=xyxy[0], y_min=xyxy[1], x_max=xyxy[2], y_max=xyxy[3]
-                                ),
-                            )
+                        label = (
+                            names.get(cls_id, str(cls_id))
+                            if isinstance(names, dict)
+                            else str(cls_id)
                         )
+                        detection = Detection(
+                            label=label,
+                            confidence=Doxa(value=conf),
+                            box=BoundingBox(
+                                x_min=xyxy[0], y_min=xyxy[1], x_max=xyxy[2], y_max=xyxy[3]
+                            ),
+                        )
+                        if estimate_demographics and label == "person":
+                            estimate = self._estimate_face_in_box(orig_bgr, xyxy)
+                            if estimate is not None:
+                                detection = detection.model_copy(update={"face_estimate": estimate})
+                        detections.append(detection)
                     frames.append(FrameDetections(frame_index=idx, detections=detections))
 
                 frame_to_write = orig_bgr
@@ -260,7 +267,9 @@ class UltralyticsAdapter(Mechane):
                 return temp.name, temp.name
         raise AdapterError("Kinesis has neither `path`, `url`, nor `data` set")
 
-    def _infer_detect(self, image: Physis, **options: object) -> DetectionResult:
+    def _infer_detect(
+        self, image: Physis, *, estimate_demographics: bool = False, **options: object
+    ) -> DetectionResult:
         YOLO = self._load_ultralytics()
         if self._detect_model is None:
             self._detect_model = YOLO(self._detect_model_path)
@@ -268,20 +277,70 @@ class UltralyticsAdapter(Mechane):
 
         detections: list[Detection] = []
         names = raw.names
+        orig_bgr = raw.orig_img if estimate_demographics else None
         for box in raw.boxes:
             xyxy = box.xyxy[0].tolist()
             cls_id = int(box.cls[0])
             conf = float(box.conf[0])
-            detections.append(
-                Detection(
-                    label=names.get(cls_id, str(cls_id))
-                    if isinstance(names, dict)
-                    else str(cls_id),
-                    confidence=Doxa(value=conf),
-                    box=BoundingBox(x_min=xyxy[0], y_min=xyxy[1], x_max=xyxy[2], y_max=xyxy[3]),
-                )
+            label = names.get(cls_id, str(cls_id)) if isinstance(names, dict) else str(cls_id)
+            detection = Detection(
+                label=label,
+                confidence=Doxa(value=conf),
+                box=BoundingBox(x_min=xyxy[0], y_min=xyxy[1], x_max=xyxy[2], y_max=xyxy[3]),
             )
+            if estimate_demographics and label == "person" and orig_bgr is not None:
+                estimate = self._estimate_face_in_box(orig_bgr, xyxy)
+                if estimate is not None:
+                    detection = detection.model_copy(update={"face_estimate": estimate})
+            detections.append(detection)
         return DetectionResult(backend=self.name, latency_ms=0.0, detections=detections)
+
+    def _load_deepface(self) -> Any:
+        try:
+            from deepface import DeepFace
+        except ImportError as exc:
+            raise BackendUnavailableError(
+                "The 'deepface' package is required for demographic estimation. "
+                "Install it with: pip install 'horasis[demographics]'"
+            ) from exc
+        return DeepFace
+
+    def _estimate_face_in_box(self, orig_bgr: Any, xyxy: list[float]) -> FaceEstimate | None:
+        """Crop the person's box out of the frame and estimate age/gender.
+
+        Returns `None` (rather than raising) if no usable face is found in
+        the crop -- a missing estimate on one detection shouldn't fail the
+        whole call.
+        """
+        height, width = orig_bgr.shape[:2]
+        x1, y1 = max(int(xyxy[0]), 0), max(int(xyxy[1]), 0)
+        x2, y2 = min(int(xyxy[2]), width), min(int(xyxy[3]), height)
+        if x2 <= x1 or y2 <= y1:
+            return None
+        crop = orig_bgr[y1:y2, x1:x2]
+
+        DeepFace = self._load_deepface()
+        try:
+            analysis = DeepFace.analyze(
+                crop, actions=["age", "gender"], enforce_detection=False, silent=True
+            )
+        except (ValueError, RuntimeError, TypeError, KeyError, OSError):
+            return None
+        if not analysis:
+            return None
+
+        entry = analysis[0]
+        gender_scores = entry.get("gender") or {}
+        dominant_gender = entry.get("dominant_gender")
+        gender_confidence = None
+        if dominant_gender and dominant_gender in gender_scores:
+            gender_confidence = Doxa(value=float(gender_scores[dominant_gender]) / 100.0)
+
+        return FaceEstimate(
+            estimated_age=entry.get("age"),
+            estimated_gender=dominant_gender,
+            gender_confidence=gender_confidence,
+        )
 
     def _infer_classify(self, image: Physis, **options: object) -> ClassificationResult:
         YOLO = self._load_ultralytics()
@@ -300,7 +359,9 @@ class UltralyticsAdapter(Mechane):
                 )
         return ClassificationResult(backend=self.name, latency_ms=0.0, entries=entries)
 
-    def _infer_detect_video(self, video: Kinesis, **options: object) -> VideoDetectionResult:
+    def _infer_detect_video(
+        self, video: Kinesis, *, estimate_demographics: bool = False, **options: object
+    ) -> VideoDetectionResult:
         import os
 
         YOLO = self._load_ultralytics()
@@ -312,28 +373,32 @@ class UltralyticsAdapter(Mechane):
 
         frames: list[FrameDetections] = []
         try:
-            stream = self._detect_model(source, stream=True, verbose=False, **options)
-            for idx, raw in enumerate(stream):
-                if idx % sample_every_n_frames != 0:
-                    continue
+            stream = self._detect_model(
+                source, stream=True, verbose=False, vid_stride=sample_every_n_frames, **options
+            )
+            for i, raw in enumerate(stream):
+                actual_idx = i * sample_every_n_frames
                 names = raw.names
+                orig_bgr = raw.orig_img if estimate_demographics else None
                 detections: list[Detection] = []
                 for box in raw.boxes:
                     xyxy = box.xyxy[0].tolist()
                     cls_id = int(box.cls[0])
                     conf = float(box.conf[0])
-                    detections.append(
-                        Detection(
-                            label=names.get(cls_id, str(cls_id))
-                            if isinstance(names, dict)
-                            else str(cls_id),
-                            confidence=Doxa(value=conf),
-                            box=BoundingBox(
-                                x_min=xyxy[0], y_min=xyxy[1], x_max=xyxy[2], y_max=xyxy[3]
-                            ),
-                        )
+                    label = (
+                        names.get(cls_id, str(cls_id)) if isinstance(names, dict) else str(cls_id)
                     )
-                frames.append(FrameDetections(frame_index=idx, detections=detections))
+                    detection = Detection(
+                        label=label,
+                        confidence=Doxa(value=conf),
+                        box=BoundingBox(x_min=xyxy[0], y_min=xyxy[1], x_max=xyxy[2], y_max=xyxy[3]),
+                    )
+                    if estimate_demographics and label == "person" and orig_bgr is not None:
+                        estimate = self._estimate_face_in_box(orig_bgr, xyxy)
+                        if estimate is not None:
+                            detection = detection.model_copy(update={"face_estimate": estimate})
+                    detections.append(detection)
+                frames.append(FrameDetections(frame_index=actual_idx, detections=detections))
         finally:
             if temp_file is not None:
                 os.unlink(temp_file)
@@ -345,7 +410,7 @@ class UltralyticsAdapter(Mechane):
             frame_count=len(frames),
             fps=video.fps,
         )
-    
+
     def _load_deepface(self):
         try:
             from deepface import DeepFace
@@ -362,7 +427,7 @@ class UltralyticsAdapter(Mechane):
             analysis = DeepFace.analyze(
                 crop_bgr, actions=["age", "gender"], enforce_detection=False, silent=True
             )[0]
-        except Exception:
+        except (ValueError, RuntimeError, TypeError, KeyError, OSError):
             return None
         gender_scores = analysis.get("gender", {})
         top_gender = max(gender_scores, key=gender_scores.get) if gender_scores else None

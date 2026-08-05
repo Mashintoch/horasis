@@ -20,6 +20,7 @@ Thumbs.db
 *.pt
 *.onnx
 *.jpg
+*.png
 annotated_output/
 *_annotated.jpg
 bus_annotated.jpg
