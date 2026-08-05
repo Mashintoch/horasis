@@ -73,4 +73,4 @@ class Mechane(ABC):
 
     def warm_up(self) -> None:
         """Optional hook to preload models/weights. Default is a no-op."""
-        return None
+        return

@@ -1,5 +1,3 @@
-"""Quota/load coverage: concurrent access to Metron must not over-admit callers."""
-
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -28,7 +26,6 @@ def test_metron_is_thread_safe_under_concurrent_load() -> None:
     successes = results.count("ok")
     failures = results.count("denied")
 
-    # Exactly `limit` calls should be admitted; no more, no fewer.
     assert successes == 50
     assert failures == 150
     assert successes + failures == 200
