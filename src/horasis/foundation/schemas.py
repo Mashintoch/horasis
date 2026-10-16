@@ -423,19 +423,3 @@ class ModerationResult(Theoria):
     @property
     def is_flagged(self) -> bool:
         return any(label.flagged for label in self.labels)
-
-
-class FaceEstimate(BaseModel):
-    """Rough, model-estimated attributes for a detected face.
-
-    These are statistical estimates from a computer vision model, not
-    verified facts -- treat them as approximate, expect real error rates,
-    and do not use them as the sole basis for any consequential decision
-    about a person.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    estimated_age: float | None = None
-    estimated_gender: str | None = None
-    gender_confidence: Doxa | None = None

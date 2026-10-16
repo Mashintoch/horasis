@@ -82,7 +82,7 @@ def limen(praxis: Praxis) -> Callable[[F], F]:
     def decorator(func: F) -> F:
         @functools.wraps(func)
         def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
-            access: AccessContext = getattr(self, "_access", None)
+            access: AccessContext | None = getattr(self, "_access", None)
             if access is None:
                 raise ValidationError(
                     f"{type(self).__name__} has no AccessContext; cannot enforce @limen"

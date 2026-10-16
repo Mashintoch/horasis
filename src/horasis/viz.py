@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 # pylint: disable=import-outside-toplevel,too-many-arguments,too-many-locals,no-member,mixed-line-endings
-
 import io
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -50,9 +49,11 @@ def _open_image(image: str | Path | bytes | Physis) -> PILImage:
         raise ValidationError(f"Unsupported image input type: {type(image).__name__}")
 
     if physis.data is not None:
-        return Image.open(io.BytesIO(physis.data)).convert("RGB")
+        opened: PILImage = Image.open(io.BytesIO(physis.data)).convert("RGB")
+        return opened
     if physis.path is not None:
-        return Image.open(physis.path).convert("RGB")
+        opened = Image.open(physis.path).convert("RGB")
+        return opened
     raise ValidationError("Physis has neither `path` nor `data` set")
 
 
@@ -311,7 +312,7 @@ def _video_capture_source(video: str | Path | bytes | Kinesis) -> tuple[Any, str
     if kinesis.data is not None:
         import tempfile
 
-        temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+        temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")  # noqa: SIM115
         temp.write(kinesis.data)
         temp.close()
         return temp.name, temp.name

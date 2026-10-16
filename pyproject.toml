@@ -36,6 +36,7 @@ dev = [
     "pytest-cov>=5.0",
     "mypy>=1.9",
     "ruff>=0.4",
+    "types-PyYAML",
 ]
 all = ["horasis[ultralytics,onnx,remote,viz,demographics]"]
 
@@ -58,9 +59,16 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 
 [tool.mypy]
-python_version = "3.11"
 strict = true
 packages = ["horasis"]
+
+[[tool.mypy.overrides]]
+module = ["deepface", "deepface.*", "imageio_ffmpeg", "easyocr", "pytesseract", "onnxruntime", "cv2", "transformers"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["ultralytics"]
+implicit_reexport = true
 
 [tool.ruff]
 line-length = 100

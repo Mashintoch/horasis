@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
-
 import pytest
 from pydantic import ValidationError
 
@@ -60,7 +58,7 @@ def test_from_yaml_loads_shipped_default_config() -> None:
 
 def test_kanon_is_immutable() -> None:
     kanon = Kanon.default()
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(ValidationError):
         kanon.default_backend = "onnx"  # type: ignore[misc]
 
 

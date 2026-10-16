@@ -68,12 +68,13 @@ class UltralyticsAdapter(Mechane):
         if self._classify_model is None:
             self._classify_model = YOLO(self._classify_model_path)
 
-    def infer(self, praxis: Praxis, image: Physis, **options: object) -> Theoria:
+    def infer(self, praxis: Praxis, image: Physis, **options: Any) -> Theoria:
         if not self.supports(praxis):
             raise BackendUnavailableError(
                 f"UltralyticsAdapter does not support praxis {praxis.value!r}"
             )
         start = time.perf_counter()
+        result: Theoria
         try:
             if praxis is Praxis.DETECT:
                 result = self._infer_detect(image, **options)
@@ -88,7 +89,7 @@ class UltralyticsAdapter(Mechane):
         latency_ms = (time.perf_counter() - start) * 1000
         return result.model_copy(update={"latency_ms": latency_ms})
 
-    def infer_video(self, praxis: Praxis, video: Kinesis, **options: object) -> Theoria:
+    def infer_video(self, praxis: Praxis, video: Kinesis, **options: Any) -> Theoria:
         if not self.supports_video(praxis):
             raise BackendUnavailableError(
                 f"UltralyticsAdapter does not support video for praxis {praxis.value!r}"
@@ -106,7 +107,7 @@ class UltralyticsAdapter(Mechane):
         return result.model_copy(update={"latency_ms": latency_ms})
 
     def infer_video_and_annotate(
-        self, praxis: Praxis, video: Kinesis, *, output_path: object, **options: object
+        self, praxis: Praxis, video: Kinesis, *, output_path: Any, **options: Any
     ) -> tuple[Theoria, object]:
         if not self.supports_video_annotate(praxis):
             raise BackendUnavailableError(
@@ -131,7 +132,7 @@ class UltralyticsAdapter(Mechane):
         self,
         video: Kinesis,
         *,
-        output_path: object,
+        output_path: Any,
         show_labels: bool = True,
         show_confidence: bool = True,
         box_color: tuple[int, int, int] | None = None,
@@ -139,7 +140,7 @@ class UltralyticsAdapter(Mechane):
         line_width: int = 3,
         font_size: int = 16,
         estimate_demographics: bool = False,
-        **options: object,
+        **options: Any,
     ) -> tuple[VideoDetectionResult, Any]:
         """Single decode pass: run inference and draw+write, reusing the
         same frame Ultralytics already decoded internally (`raw.orig_img`)
@@ -160,7 +161,7 @@ class UltralyticsAdapter(Mechane):
         if self._detect_model is None:
             self._detect_model = YOLO(self._detect_model_path)
 
-        sample_every_n_frames = int(options.pop("sample_every_n_frames", 1))  # type: ignore[arg-type]
+        sample_every_n_frames = int(options.pop("sample_every_n_frames", 1))
         source, temp_file = self._video_source_for(video)
 
         probe = cv2.VideoCapture(source)
@@ -268,7 +269,7 @@ class UltralyticsAdapter(Mechane):
         raise AdapterError("Kinesis has neither `path`, `url`, nor `data` set")
 
     def _infer_detect(
-        self, image: Physis, *, estimate_demographics: bool = False, **options: object
+        self, image: Physis, *, estimate_demographics: bool = False, **options: Any
     ) -> DetectionResult:
         YOLO = self._load_ultralytics()
         if self._detect_model is None:
@@ -342,7 +343,7 @@ class UltralyticsAdapter(Mechane):
             gender_confidence=gender_confidence,
         )
 
-    def _infer_classify(self, image: Physis, **options: object) -> ClassificationResult:
+    def _infer_classify(self, image: Physis, **options: Any) -> ClassificationResult:
         YOLO = self._load_ultralytics()
         if self._classify_model is None:
             self._classify_model = YOLO(self._classify_model_path)
@@ -360,7 +361,7 @@ class UltralyticsAdapter(Mechane):
         return ClassificationResult(backend=self.name, latency_ms=0.0, entries=entries)
 
     def _infer_detect_video(
-        self, video: Kinesis, *, estimate_demographics: bool = False, **options: object
+        self, video: Kinesis, *, estimate_demographics: bool = False, **options: Any
     ) -> VideoDetectionResult:
         import os
 
@@ -368,7 +369,7 @@ class UltralyticsAdapter(Mechane):
         if self._detect_model is None:
             self._detect_model = YOLO(self._detect_model_path)
 
-        sample_every_n_frames = int(options.pop("sample_every_n_frames", 1))  # type: ignore[arg-type]
+        sample_every_n_frames = int(options.pop("sample_every_n_frames", 1))
         source, temp_file = self._video_source_for(video)
 
         frames: list[FrameDetections] = []
@@ -409,31 +410,4 @@ class UltralyticsAdapter(Mechane):
             frames=frames,
             frame_count=len(frames),
             fps=video.fps,
-        )
-
-    def _load_deepface(self):
-        try:
-            from deepface import DeepFace
-        except ImportError as exc:
-            raise BackendUnavailableError(
-                "The 'deepface' package is required for demographic estimation. "
-                "Install it with: pip install 'horasis[demographics]'"
-            ) from exc
-        return DeepFace
-
-    def _estimate_face(self, crop_bgr) -> FaceEstimate | None:
-        DeepFace = self._load_deepface()
-        try:
-            analysis = DeepFace.analyze(
-                crop_bgr, actions=["age", "gender"], enforce_detection=False, silent=True
-            )[0]
-        except (ValueError, RuntimeError, TypeError, KeyError, OSError):
-            return None
-        gender_scores = analysis.get("gender", {})
-        top_gender = max(gender_scores, key=gender_scores.get) if gender_scores else None
-        top_conf = gender_scores.get(top_gender, 0.0) / 100.0 if top_gender else None
-        return FaceEstimate(
-            estimated_age=analysis.get("age"),
-            estimated_gender=top_gender,
-            gender_confidence=Doxa(value=top_conf) if top_conf is not None else None,
         )

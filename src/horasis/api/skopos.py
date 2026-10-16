@@ -149,7 +149,10 @@ class ObjectDetector(_Capability):
                 Install it with: pip install 'horasis[viz]'
         """
         physis = _to_physis(image)
-        result = self.detect(physis, api_key=api_key, backend=backend, estimate_demographics=estimate_demographics)
+        # `@limen` injects the `api_key` keyword; the decorated signature does not declare it.
+        result = self.detect(  # type: ignore[call-arg]
+            physis, api_key=api_key, backend=backend, estimate_demographics=estimate_demographics
+        )
         annotated = result.annotate(
             physis,
             show_labels=show_labels,
@@ -366,7 +369,7 @@ class ObjectDetector(_Capability):
             estimate_demographics=estimate_demographics,
         )
         assert isinstance(result, VideoDetectionResult)
-        return result, Path(out_path)
+        return result, Path(str(out_path))
 
 
 class ImageClassifier(_Capability):
