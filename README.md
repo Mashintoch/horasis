@@ -406,9 +406,9 @@ pylint $(git ls-files '*.py')
 
 ## Status and known limits
 
-Version 1.1.0 (see [CHANGELOG.md](CHANGELOG.md)) supports Python 3.10–3.12.
+Version 2.0.0 (see [CHANGELOG.md](CHANGELOG.md)) supports Python 3.10–3.12.
 Everything above is implemented and covered by offline tests that use fake
-backends. The suite never downloads a model or touches the network. The
+backends. The default suite never downloads a model or touches the network. The
 `integration` pytest marker covers the real-model tests in `tests/integration/real/`
 (Ultralytics, ONNX, EasyOCR, Tesseract, YuNet, moderation, remote). They are
 skipped unless you pass `-m integration`, and each one skips itself when its
@@ -419,11 +419,11 @@ Known limits:
 
 - Rate limits (token buckets) are per process unless you use `RedisRateLimiter`. Quotas are shared via the SQLite and Redis stores.
 - `max_loaded_models` evicts whole backends, not individual models.
-- Ultralytics, Tesseract, EasyOCR, YuNet, the moderation model and onnxruntime have only been exercised through test doubles, never against the real engines or weights. Smoke-test each one you depend on.
+- The real-model tests run Ultralytics (detect, classify, segment, pose), YuNet and the remote path in CI. ONNX, EasyOCR, Tesseract and the moderation model have integration tests that have not yet been run against real weights; smoke-test those you depend on.
 - Only the YuNet model is managed by `horasis models` (cache dir `HORASIS_CACHE_DIR`, default the platform user cache). Ultralytics, EasyOCR and transformers fetch their own weights; ONNX models are yours to supply. YuNet downloads automatically only with `Kanon(auto_download_models=True)`.
 - `HashedApiKeyValidator` keeps its records in memory. Persist them with `export_records()`.
 - Image URL fetching is off by default. When enabled it is SSRF-hardened: http(s) only, every resolved address must be globally routable, the connection is pinned to the validated IP (no DNS rebinding), redirects are followed manually (max 3, re-validated), bodies are streamed with a size cap and must be `image/*`. `InputPolicy.url_allow_hosts` / `url_deny_hosts` add a hostname policy. Video URLs (`Kinesis.from_url`, `stream`) use a simpler fetch without these checks, so keep them for trusted callers.
-- There's no admin API for keys, no object tracking, no result caching and no Docker image yet. See [docs/guide.md](docs/guide.md) for the roadmap.
+- There's no admin API for keys, no object tracking, no result caching and no Docker image yet.
 
 ## License
 
