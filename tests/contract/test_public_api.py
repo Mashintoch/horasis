@@ -26,6 +26,7 @@ from horasis.foundation.schemas import (
     Praxis,
 )
 from horasis.foundation.sphalma import ValidationError
+from tests.conftest import png_bytes
 
 
 @pytest.fixture
@@ -84,9 +85,9 @@ def test_public_api_never_leaks_backend_types(skopos: Skopos, sample_image) -> N
 
 def test_capability_accepts_path_bytes_and_physis(skopos: Skopos, tmp_path, sample_image) -> None:
     img_path = tmp_path / "image.bin"
-    img_path.write_bytes(b"fake-bytes")
+    img_path.write_bytes(png_bytes())
 
-    for image_input in (str(img_path), img_path, b"raw-bytes", sample_image):
+    for image_input in (str(img_path), img_path, png_bytes(), sample_image):
         result = skopos.detection.detect(image_input, api_key="pro-key")
         assert isinstance(result, DetectionResult)
 

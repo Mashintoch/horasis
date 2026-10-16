@@ -56,8 +56,38 @@ class BackendUnavailableError(Sphalma):
     """Raised when no backend can be resolved for a requested task."""
 
 
+class NoBackendError(BackendUnavailableError):
+    """Raised when no registered backend can serve a praxis.
+
+    ``context`` carries ``praxis``, the ``registered`` backend names and the
+    ``considered`` names that were checked, so callers can explain the gap.
+    """
+
+
 class AdapterError(Sphalma):
     """Raised when a backend adapter fails to execute inference."""
+
+
+class RemoteError(AdapterError):
+    """Raised when a remote horasis server fails or is unreachable.
+
+    Attributes:
+        status_code: HTTP status, or ``None`` for transport failures (timeouts,
+            connection errors).
+        retryable: Whether retrying the same request might succeed.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        retryable: bool = False,
+        context: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message, context=context)
+        self.status_code = status_code
+        self.retryable = retryable
 
 
 class VisualizationUnavailableError(Sphalma):

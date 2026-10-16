@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from horasis.backend.taxis import Taxis
 from horasis.foundation.kanon import Kanon
-from horasis.foundation.schemas import Kinesis, Physis, Praxis, Theoria
+from horasis.foundation.schemas import Kinesis, ModerationResult, Physis, Praxis, Theoria
 from horasis.orchestration.kairos import Kairos, Moment
 
 
@@ -19,6 +19,34 @@ class Organon:
         self._kanon = kanon
         self._taxis = taxis
         self._kairos = kairos or Kairos()
+
+    def _routing(self, praxis: Praxis) -> dict[str, list[str]]:
+        """Config-driven backend preference and fallback for `praxis`."""
+        return {
+            "order": self._kanon.backend_order.get(praxis.value, []),
+            "fallback": self._kanon.fallback_order,
+        }
+
+    def _apply_policy(self, result: Theoria) -> Theoria:
+        """Re-flag moderation results using the thresholds configured in `Kanon`.
+
+        Whatever a backend decided, `Kanon.moderation_threshold(s)` and
+        `moderation_safe_categories` are authoritative, so behaviour is the
+        same across moderation backends (local or remote).
+        """
+        if not isinstance(result, ModerationResult):
+            return result
+        safe = {c.lower() for c in self._kanon.moderation_safe_categories}
+        labels = [
+            label.model_copy(
+                update={
+                    "flagged": label.category.lower() not in safe
+                    and label.confidence.value >= self._kanon.moderation_threshold_for(label.category)
+                }
+            )
+            for label in result.labels
+        ]
+        return result.model_copy(update={"labels": labels})
 
     @property
     def kairos(self) -> Kairos:
@@ -44,12 +72,12 @@ class Organon:
         """
         self._kairos.before_resolve(praxis=praxis, image=image)
         resolved = self._taxis.resolve(
-            praxis, preferred=backend, default=self._kanon.default_backend
+            praxis, preferred=backend, default=self._kanon.default_backend, **self._routing(praxis)
         )
         self._kairos.after_resolve(praxis=praxis, backend=resolved)
 
         self._kairos.before_infer(praxis=praxis, backend=resolved, image=image)
-        result = resolved.infer(praxis, image, **options)
+        result = self._apply_policy(resolved.infer(praxis, image, **options))
         self._kairos.after_infer(praxis=praxis, backend=resolved, result=result)
         return result
 
@@ -77,7 +105,7 @@ class Organon:
         """
         self._kairos.fire(Moment.BEFORE_RESOLVE, praxis=praxis, video=video)
         resolved = self._taxis.resolve_video(
-            praxis, preferred=backend, default=self._kanon.default_backend
+            praxis, preferred=backend, default=self._kanon.default_backend, **self._routing(praxis)
         )
         self._kairos.fire(Moment.AFTER_RESOLVE, praxis=praxis, backend=resolved)
 
@@ -119,7 +147,7 @@ class Organon:
         """
         self._kairos.fire(Moment.BEFORE_RESOLVE, praxis=praxis, video=video)
         resolved = self._taxis.resolve_video_annotate(
-            praxis, preferred=backend, default=self._kanon.default_backend
+            praxis, preferred=backend, default=self._kanon.default_backend, **self._routing(praxis)
         )
         self._kairos.fire(Moment.AFTER_RESOLVE, praxis=praxis, backend=resolved)
 

@@ -8,7 +8,7 @@ exception hierarchy (:mod:`~horasis.foundation.sphalma`), result schemas
 """
 
 from horasis.foundation.aisthesis import Aisthesis, LoggingAisthesis, NullAisthesis
-from horasis.foundation.kanon import Kanon, QuotaRule, TierRule
+from horasis.foundation.kanon import InputPolicy, Kanon, QuotaRule, TierRule
 from horasis.foundation.schemas import (
     BoundingBox,
     ClassificationEntry,
@@ -16,6 +16,7 @@ from horasis.foundation.schemas import (
     Detection,
     DetectionResult,
     Doxa,
+    Face,
     FaceResult,
     FrameDetections,
     Glyph,
@@ -36,8 +37,10 @@ from horasis.foundation.sphalma import (
     ExpiredApiKeyError,
     HorasisError,
     InvalidApiKeyError,
+    NoBackendError,
     PluginError,
     QuotaExceededError,
+    RemoteError,
     RevokedApiKeyError,
     Sphalma,
     ValidationError,
@@ -57,16 +60,19 @@ __all__ = [
     "DetectionResult",
     "Doxa",
     "ExpiredApiKeyError",
+    "Face",
     "FaceResult",
     "FrameDetections",
     "Glyph",
     "HorasisError",
+    "InputPolicy",
     "InvalidApiKeyError",
     "Kanon",
     "Kinesis",
     "LoggingAisthesis",
     "ModerationLabel",
     "ModerationResult",
+    "NoBackendError",
     "NullAisthesis",
     "OcrResult",
     "Physis",
@@ -74,6 +80,7 @@ __all__ = [
     "Praxis",
     "QuotaExceededError",
     "QuotaRule",
+    "RemoteError",
     "RevokedApiKeyError",
     "Sphalma",
     "Theoria",

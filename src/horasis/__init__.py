@@ -24,11 +24,13 @@ from horasis.api.skopos import (
     Skopos,
     TextExtractor,
 )
-from horasis.foundation.kanon import Kanon
+from horasis.foundation.kanon import InputPolicy, Kanon
 from horasis.foundation.schemas import (
     ClassificationResult,
     DetectionResult,
+    Face,
     FaceResult,
+    Glyph,
     Kinesis,
     ModerationResult,
     OcrResult,
@@ -43,14 +45,16 @@ from horasis.foundation.sphalma import (
     ConfigurationError,
     ExpiredApiKeyError,
     InvalidApiKeyError,
+    NoBackendError,
     QuotaExceededError,
+    RemoteError,
     RevokedApiKeyError,
     Sphalma,
     ValidationError,
     VisualizationUnavailableError,
 )
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 __all__ = [
     "AccessDeniedError",
@@ -62,20 +66,25 @@ __all__ = [
     "ContentModerator",
     "DetectionResult",
     "ExpiredApiKeyError",
+    "Face",
     "FaceDetector",
     "FaceResult",
+    "Glyph",
     "ImageClassifier",
     "InMemoryApiKeyValidator",
+    "InputPolicy",
     "InvalidApiKeyError",
     "Kanon",
     "Kinesis",
     "Klimax",
     "ModerationResult",
+    "NoBackendError",
     "ObjectDetector",
     "OcrResult",
     "Physis",
     "Praxis",
     "QuotaExceededError",
+    "RemoteError",
     "RevokedApiKeyError",
     "Skopos",
     "Sphalma",

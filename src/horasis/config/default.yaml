@@ -1,6 +1,19 @@
 default_backend: ultralytics
 telemetry_enabled: true
 
+inputs:
+  allow_urls: false          # network fetches of image URLs are opt-in
+  max_bytes: 20971520
+  max_pixels: 100000000
+  apply_exif_orientation: true
+
+# backend_order:             # per-praxis preference, first registered match wins
+#   ocr: [easyocr, tesseract]
+# fallback_order: [remote]
+
+moderation_threshold: 0.5
+# moderation_thresholds: {nsfw: 0.7}
+
 tiers:
   free:
     name: free

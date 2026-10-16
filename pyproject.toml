@@ -22,6 +22,8 @@ classifiers = [
 dependencies = [
     "pydantic>=2.6",
     "PyYAML>=6.0",
+    "Pillow>=10.0",
+    "numpy>=1.26",
     "ultralytics>=8.2",
 ]
 
@@ -29,6 +31,9 @@ dependencies = [
 ultralytics = ["ultralytics>=8.2"]
 onnx = ["onnxruntime>=1.17"]
 remote = ["httpx>=0.27"]
+ocr = ["easyocr>=1.7", "pytesseract>=0.3.10"]
+face = ["opencv-python-headless>=4.8"]
+moderation = ["transformers>=4.40", "torch>=2.2"]
 viz = ["Pillow>=10.0", "opencv-python-headless>=4.8", "imageio>=2.34", "imageio-ffmpeg>=0.5"]
 demographics = ["deepface>=0.0.93", "tf-keras>=2.15"]
 dev = [
@@ -37,8 +42,9 @@ dev = [
     "mypy>=1.9",
     "ruff>=0.4",
     "types-PyYAML",
+    "httpx>=0.27",
 ]
-all = ["horasis[ultralytics,onnx,remote,viz,demographics]"]
+all = ["horasis[ultralytics,onnx,remote,ocr,face,moderation,viz,demographics]"]
 
 [project.urls]
 Homepage = "https://github.com/mashintoch/horasis"
@@ -57,6 +63,7 @@ horasis = ["py.typed", "config/*.yaml"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = ["integration: needs real models/network; skipped unless run with -m integration"]
 
 [tool.mypy]
 strict = true

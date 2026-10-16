@@ -4,6 +4,7 @@ import time
 from typing import Any
 
 from horasis.backend.mechane import Mechane
+from horasis.foundation.imaging import load_rgb
 from horasis.foundation.schemas import (
     BoundingBox,
     ClassificationEntry,
@@ -19,7 +20,7 @@ from horasis.foundation.schemas import (
     Theoria,
     VideoDetectionResult,
 )
-from horasis.foundation.sphalma import AdapterError, BackendUnavailableError
+from horasis.foundation.sphalma import AdapterError, BackendUnavailableError, Sphalma
 from horasis.viz import _open_video_writer
 
 
@@ -80,7 +81,7 @@ class UltralyticsAdapter(Mechane):
                 result = self._infer_detect(image, **options)
             else:
                 result = self._infer_classify(image, **options)
-        except BackendUnavailableError:
+        except Sphalma:
             raise
         except Exception as exc:
             raise AdapterError(
@@ -97,7 +98,7 @@ class UltralyticsAdapter(Mechane):
         start = time.perf_counter()
         try:
             result = self._infer_detect_video(video, **options)
-        except BackendUnavailableError:
+        except Sphalma:
             raise
         except Exception as exc:
             raise AdapterError(
@@ -119,7 +120,7 @@ class UltralyticsAdapter(Mechane):
             result, out_path = self._infer_detect_video_and_annotate(
                 video, output_path=output_path, **options
             )
-        except BackendUnavailableError:
+        except Sphalma:
             raise
         except Exception as exc:
             raise AdapterError(
@@ -237,15 +238,8 @@ class UltralyticsAdapter(Mechane):
         return result, out_path
 
     def _source_for(self, image: Physis) -> Any:
-        if image.path is not None:
-            return str(image.path)
-        if image.data is not None:
-            import io
-
-            from PIL import Image as PILImage
-
-            return PILImage.open(io.BytesIO(image.data)).convert("RGB")
-        raise AdapterError("Physis has neither `path` nor `data` set")
+        """Upright, validated RGB pixels (shared loader), as a PIL image."""
+        return load_rgb(image)
 
     def _video_source_for(self, video: Kinesis) -> tuple[Any, str | None]:
         """Return (source_for_ultralytics, temp_file_path_to_clean_up_or_None).

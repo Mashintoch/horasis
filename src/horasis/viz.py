@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 # pylint: disable=import-outside-toplevel,too-many-arguments,too-many-locals,no-member,mixed-line-endings
-import io
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from horasis.foundation.imaging import load_rgb, to_physis
 from horasis.foundation.schemas import (
     Detection,
     DetectionResult,
@@ -34,27 +35,10 @@ def _load_pillow() -> Any:
     return Image, ImageDraw, ImageFont
 
 
-def _open_image(image: str | Path | bytes | Physis) -> PILImage:
-    Image, _, _ = _load_pillow()
-
-    if isinstance(image, Physis):
-        physis = image
-    elif isinstance(image, bytes):
-        physis = Physis.from_bytes(image)
-    elif isinstance(image, str):
-        physis = Physis.from_source(image)
-    elif isinstance(image, Path):
-        physis = Physis.from_path(image)
-    else:
-        raise ValidationError(f"Unsupported image input type: {type(image).__name__}")
-
-    if physis.data is not None:
-        opened: PILImage = Image.open(io.BytesIO(physis.data)).convert("RGB")
-        return opened
-    if physis.path is not None:
-        opened = Image.open(physis.path).convert("RGB")
-        return opened
-    raise ValidationError("Physis has neither `path` nor `data` set")
+def _open_image(image: Any) -> PILImage:
+    """Load any supported image input as upright RGB via the shared loader."""
+    _load_pillow()
+    return load_rgb(to_physis(image))
 
 
 def _color_for_label(label: str) -> tuple[int, int, int]:
@@ -67,7 +51,7 @@ def _color_for_label(label: str) -> tuple[int, int, int]:
 
 def _draw_boxes(
     image: PILImage,
-    detections: list[Detection],
+    detections: Sequence[Detection],
     *,
     show_labels: bool,
     show_confidence: bool,

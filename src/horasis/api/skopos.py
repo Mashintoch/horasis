@@ -6,9 +6,11 @@ from pathlib import Path
 from horasis.access.keys import ApiKeyValidator, InMemoryApiKeyValidator
 from horasis.access.limen import AccessContext, limen
 from horasis.access.prosopon import Prosopon
+from horasis.backend.mechane import Mechane
 from horasis.backend.taxis import Taxis
 from horasis.backend.ultralytics_adapter import UltralyticsAdapter
 from horasis.foundation.aisthesis import Aisthesis
+from horasis.foundation.imaging import ImageInput, to_physis
 from horasis.foundation.kanon import Kanon
 from horasis.foundation.schemas import (
     ClassificationResult,
@@ -17,25 +19,11 @@ from horasis.foundation.schemas import (
     Kinesis,
     ModerationResult,
     OcrResult,
-    Physis,
     Praxis,
     VideoDetectionResult,
 )
 from horasis.foundation.sphalma import ValidationError
 from horasis.orchestration.organon import Organon
-
-
-def _to_physis(image: str | Path | bytes | Physis) -> Physis:
-    """Normalize any accepted image input into a `Physis`."""
-    if isinstance(image, Physis):
-        return image
-    if isinstance(image, bytes):
-        return Physis.from_bytes(image)
-    if isinstance(image, str):
-        return Physis.from_source(image)
-    if isinstance(image, Path):
-        return Physis.from_path(image)
-    raise ValidationError(f"Unsupported image input type: {type(image).__name__}")
 
 
 def _to_kinesis(video: str | Path | bytes | Kinesis) -> Kinesis:
@@ -65,7 +53,7 @@ class ObjectDetector(_Capability):
     @limen(Praxis.DETECT)
     def detect(
         self,
-        image: str | Path | bytes | Physis,
+        image: ImageInput,
         *,
         backend: str | None = None,
         estimate_demographics: bool = False,
@@ -90,7 +78,7 @@ class ObjectDetector(_Capability):
         """
         result = self._organon.run(
             Praxis.DETECT,
-            _to_physis(image),
+            to_physis(image, self._access.kanon.inputs),
             backend=backend,
             estimate_demographics=estimate_demographics,
         )
@@ -99,7 +87,7 @@ class ObjectDetector(_Capability):
 
     def detect_and_annotate(
         self,
-        image: str | Path | bytes | Physis,
+        image: ImageInput,
         *,
         api_key: str,
         backend: str | None = None,
@@ -148,7 +136,7 @@ class ObjectDetector(_Capability):
             VisualizationUnavailableError: if Pillow is not installed.
                 Install it with: pip install 'horasis[viz]'
         """
-        physis = _to_physis(image)
+        physis = to_physis(image, self._access.kanon.inputs)
         # `@limen` injects the `api_key` keyword; the decorated signature does not declare it.
         result = self.detect(  # type: ignore[call-arg]
             physis, api_key=api_key, backend=backend, estimate_demographics=estimate_demographics
@@ -164,7 +152,7 @@ class ObjectDetector(_Capability):
 
     def detect_and_annotate_batch(
         self,
-        images: Sequence[str | Path | bytes | Physis],
+        images: Sequence[ImageInput],
         *,
         api_key: str,
         backend: str | None = None,
@@ -378,13 +366,13 @@ class ImageClassifier(_Capability):
     @limen(Praxis.CLASSIFY)
     def classify(
         self,
-        image: str | Path | bytes | Physis,
+        image: ImageInput,
         *,
         backend: str | None = None,
         principal: Prosopon | None = None,
     ) -> ClassificationResult:
         """Classify `image`, returning ranked label/confidence entries."""
-        result = self._organon.run(Praxis.CLASSIFY, _to_physis(image), backend=backend)
+        result = self._organon.run(Praxis.CLASSIFY, to_physis(image, self._access.kanon.inputs), backend=backend)
         assert isinstance(result, ClassificationResult)
         return result
 
@@ -395,13 +383,13 @@ class TextExtractor(_Capability):
     @limen(Praxis.OCR)
     def extract_text(
         self,
-        image: str | Path | bytes | Physis,
+        image: ImageInput,
         *,
         backend: str | None = None,
         principal: Prosopon | None = None,
     ) -> OcrResult:
         """Extract text from `image` as a sequence of recognized glyphs."""
-        result = self._organon.run(Praxis.OCR, _to_physis(image), backend=backend)
+        result = self._organon.run(Praxis.OCR, to_physis(image, self._access.kanon.inputs), backend=backend)
         assert isinstance(result, OcrResult)
         return result
 
@@ -412,13 +400,13 @@ class FaceDetector(_Capability):
     @limen(Praxis.FACE)
     def detect_faces(
         self,
-        image: str | Path | bytes | Physis,
+        image: ImageInput,
         *,
         backend: str | None = None,
         principal: Prosopon | None = None,
     ) -> FaceResult:
         """Detect faces in `image`."""
-        result = self._organon.run(Praxis.FACE, _to_physis(image), backend=backend)
+        result = self._organon.run(Praxis.FACE, to_physis(image, self._access.kanon.inputs), backend=backend)
         assert isinstance(result, FaceResult)
         return result
 
@@ -429,13 +417,13 @@ class ContentModerator(_Capability):
     @limen(Praxis.MODERATE)
     def moderate(
         self,
-        image: str | Path | bytes | Physis,
+        image: ImageInput,
         *,
         backend: str | None = None,
         principal: Prosopon | None = None,
     ) -> ModerationResult:
         """Score `image` against moderation categories."""
-        result = self._organon.run(Praxis.MODERATE, _to_physis(image), backend=backend)
+        result = self._organon.run(Praxis.MODERATE, to_physis(image, self._access.kanon.inputs), backend=backend)
         assert isinstance(result, ModerationResult)
         return result
 
@@ -492,6 +480,7 @@ class Skopos:
         kanon: Kanon | None = None,
         validator: ApiKeyValidator | None = None,
         aisthesis: Aisthesis | None = None,
+        backends: Sequence[Mechane] = (),
     ) -> Skopos:
         """Convenience constructor wiring up the default Ultralytics backend.
 
@@ -501,9 +490,15 @@ class Skopos:
                 validator (register keys via the returned client's
                 `_validator`, or supply your own production validator).
             aisthesis: Telemetry sink; defaults to a no-op.
+            backends: Extra `Mechane` backends to register after Ultralytics
+                (e.g. `EasyOCRAdapter()`, `YuNetFaceAdapter(model_path=...)`).
+                Route to them with `Kanon.backend_order`, or per call with
+                `backend="name"`.
         """
         kanon = kanon or Kanon.default()
         validator = validator or InMemoryApiKeyValidator()
         taxis = Taxis()
         taxis.register(UltralyticsAdapter())
+        for backend in backends:
+            taxis.register(backend)
         return cls(kanon=kanon, taxis=taxis, validator=validator, aisthesis=aisthesis)

@@ -31,6 +31,33 @@ class TierRule(BaseModel):
     )
 
 
+class InputPolicy(BaseModel):
+    """Rules `Physis` applies when loading caller-supplied images.
+
+    Attributes:
+        allow_urls: URL inputs are fetched only when this is True (off by
+            default so a caller-controlled string can never trigger a
+            network request unless the operator opted in).
+        max_bytes: Largest accepted encoded image, in bytes.
+        max_pixels: Largest accepted decoded image (width * height); guards
+            against decompression bombs.
+        allowed_formats: Pillow format names that may be decoded.
+        url_timeout_seconds: Network timeout used when fetching a URL.
+        apply_exif_orientation: Rotate/flip pixels per the EXIF orientation tag.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    allow_urls: bool = False
+    max_bytes: int = Field(default=20 * 1024 * 1024, gt=0)
+    max_pixels: int = Field(default=100_000_000, gt=0)
+    allowed_formats: list[str] = Field(
+        default_factory=lambda: ["JPEG", "PNG", "WEBP", "BMP", "TIFF", "GIF"]
+    )
+    url_timeout_seconds: float = Field(default=10.0, gt=0)
+    apply_exif_orientation: bool = True
+
+
 class Kanon(BaseModel):
     """Top-level runtime configuration for `horasis`.
 
@@ -40,6 +67,17 @@ class Kanon(BaseModel):
         tiers: Mapping of tier name -> :class:`TierRule`.
         telemetry_enabled: Whether :class:`~horasis.foundation.aisthesis.Aisthesis`
             hooks should fire.
+        inputs: Image-loading policy (size limits, formats, URL opt-in).
+        backend_order: Per-praxis backend preference, e.g.
+            ``{"ocr": ["easyocr", "tesseract"]}``. The first registered
+            backend in the list that supports the praxis wins.
+        fallback_order: Backends tried (in order) after ``backend_order`` and
+            ``default_backend`` found nothing, before any other registered one.
+        moderation_threshold: Score at or above which a moderation category
+            is flagged, unless overridden in ``moderation_thresholds``.
+        moderation_thresholds: Per-category flag thresholds.
+        moderation_safe_categories: Categories that describe benign content
+            (e.g. ``"normal"``); never flagged regardless of score.
         extra: Free-form namespace for plugin-specific settings.
     """
 
@@ -48,6 +86,14 @@ class Kanon(BaseModel):
     default_backend: str = "ultralytics"
     tiers: dict[str, TierRule] = Field(default_factory=dict)
     telemetry_enabled: bool = True
+    inputs: InputPolicy = Field(default_factory=InputPolicy)
+    backend_order: dict[str, list[str]] = Field(default_factory=dict)
+    fallback_order: list[str] = Field(default_factory=list)
+    moderation_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    moderation_thresholds: dict[str, float] = Field(default_factory=dict)
+    moderation_safe_categories: list[str] = Field(
+        default_factory=lambda: ["normal", "safe", "sfw", "neutral", "drawings"]
+    )
     extra: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
@@ -88,6 +134,10 @@ class Kanon(BaseModel):
                 ),
             },
         )
+
+    def moderation_threshold_for(self, category: str) -> float:
+        """Flag threshold for a moderation `category` (per-category override wins)."""
+        return self.moderation_thresholds.get(category, self.moderation_threshold)
 
     def tier(self, name: str) -> TierRule:
         try:
