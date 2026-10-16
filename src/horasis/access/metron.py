@@ -32,11 +32,11 @@ class QuotaStore(Protocol):
 
     def increment_and_get(self, key: str, *, window_seconds: int, amount: int = 1) -> int:
         """Atomically add `amount` (negative to refund) and return the new count."""
-        ...
+        raise NotImplementedError
 
     def current(self, key: str, *, window_seconds: int) -> int:
         """Return the current count for `key` without changing it."""
-        ...
+        raise NotImplementedError
 
 
 class InMemoryQuotaStore:

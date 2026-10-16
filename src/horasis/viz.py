@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 # pylint: disable=import-outside-toplevel,too-many-arguments,too-many-locals,no-member,mixed-line-endings
+import importlib.util
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -264,12 +265,9 @@ class _FfmpegVideoWriter:
 
 def _open_video_writer(cv2: Any, path: str, fps: float, width: int, height: int) -> Any:
     """Open the best available video writer for `path`."""
-    try:
-        import imageio  # noqa: F401
-        import imageio_ffmpeg  # noqa: F401
-    except ImportError:
-        return _Cv2VideoWriter(cv2, path, fps, width, height)
-    return _FfmpegVideoWriter(cv2, path, fps)
+    if importlib.util.find_spec("imageio") and importlib.util.find_spec("imageio_ffmpeg"):
+        return _FfmpegVideoWriter(cv2, path, fps)
+    return _Cv2VideoWriter(cv2, path, fps, width, height)
 
 
 def _video_capture_source(video: str | Path | bytes | Kinesis) -> tuple[Any, str | None]:
@@ -301,9 +299,8 @@ def _video_capture_source(video: str | Path | bytes | Kinesis) -> tuple[Any, str
     if kinesis.data is not None:
         import tempfile
 
-        temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")  # noqa: SIM115
-        temp.write(kinesis.data)
-        temp.close()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp:
+            temp.write(kinesis.data)
         return temp.name, temp.name
     raise ValidationError("Kinesis has neither `path`, `url`, nor `data` set")
 
@@ -440,7 +437,10 @@ def render_ocr(
         else:
             continue
         caption = f"{g.text} {g.confidence.value:.2f}" if show_confidence else g.text
-        draw.text((x, max(y - font_size - 2, 0)), caption, fill=color, font=font)
+        top = max(y - font_size - 6, 0)
+        left, _, right, bottom = draw.textbbox((x + 2, top + 1), caption, font=font)
+        draw.rectangle([(left - 2, top), (right + 2, bottom + 2)], fill=color)
+        draw.text((x + 2, top + 1), caption, fill=text_color, font=font)
     return annotated
 
 

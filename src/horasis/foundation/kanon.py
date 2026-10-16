@@ -155,7 +155,7 @@ class Kanon(BaseModel):
         if not p.is_file():
             raise ConfigurationError(f"Kanon config file not found: {p}")
         try:
-            raw = yaml.safe_load(p.read_text()) or {}
+            raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         except yaml.YAMLError as exc:
             raise ConfigurationError(f"Kanon config file is not valid YAML: {p}") from exc
         return cls.from_dict(raw)
@@ -193,11 +193,14 @@ class Kanon(BaseModel):
 
     def cost_for(self, praxis: str) -> int:
         """Units one call to `praxis` consumes (OCR/moderation cost more)."""
-        return max(1, self.praxis_cost.get(praxis, 1))
+        # pydantic fields look like FieldInfo to pylint, hence the no-member pragma
+        return max(1, self.praxis_cost.get(praxis, 1))  # pylint: disable=no-member
 
     def moderation_threshold_for(self, category: str) -> float:
         """Flag threshold for a moderation `category` (per-category override wins)."""
-        return self.moderation_thresholds.get(category, self.moderation_threshold)
+        return self.moderation_thresholds.get(  # pylint: disable=no-member
+            category, self.moderation_threshold
+        )
 
     def tier(self, name: str) -> TierRule:
         try:

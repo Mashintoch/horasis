@@ -164,17 +164,16 @@ def limen(praxis: Praxis) -> Callable[[F], F]:
                     praxis=praxis.value, principal_id=principal.principal_id, error=exc
                 )
                 raise
-            else:
-                latency_ms = (time.perf_counter() - start) * 1000
-                backend = getattr(result, "backend", "unknown")
-                access.aisthesis.on_call_end(
-                    praxis=praxis.value,
-                    principal_id=principal.principal_id,
-                    backend=backend,
-                    latency_ms=latency_ms,
-                    success=True,
-                )
-                return result
+            latency_ms = (time.perf_counter() - start) * 1000
+            backend = getattr(result, "backend", "unknown")
+            access.aisthesis.on_call_end(
+                praxis=praxis.value,
+                principal_id=principal.principal_id,
+                backend=backend,
+                latency_ms=latency_ms,
+                success=True,
+            )
+            return result
 
         return wrapper  # type: ignore[return-value]
 

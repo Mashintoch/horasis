@@ -146,11 +146,11 @@ def _check_url_is_video(url: str, *, timeout: float) -> None:
                 content_type = response.headers.get("Content-Type")
             break
         except (urllib.error.URLError, urllib.error.HTTPError) as exc:
-            logger.debug(f"Failed to check URL {url} with kwargs {kwargs}: {exc}")
+            logger.debug("Failed to check URL %s with kwargs %s: %s", url, kwargs, exc)
             continue
 
     if content_type is None:
-        return 
+        return
 
     normalized = content_type.split(";")[0].strip().lower()
     if normalized.startswith("video/") or normalized == "application/octet-stream":
@@ -279,7 +279,7 @@ class Theoria(BaseModel):
     praxis: Praxis
     backend: str
     latency_ms: float
-    created_at: float = Field(default_factory=lambda: time.time())
+    created_at: float = Field(default_factory=time.time)
 
     # Name of the list field holding this result's items (used by `filter`).
     _items_field: ClassVar[str | None] = None

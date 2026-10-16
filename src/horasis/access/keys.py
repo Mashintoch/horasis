@@ -1,7 +1,6 @@
 """API key validation interface."""
 
 
-
 from __future__ import annotations
 
 import hashlib
@@ -22,11 +21,9 @@ class ApiKeyValidator(Protocol):
     """Resolves a raw API key string into an authenticated :class:`Prosopon`."""
 
 
-
     def validate(self, api_key: str) -> Prosopon:
 
         """Return the :class:`Prosopon` for `api_key`.
-
 
 
         Raises:
@@ -39,10 +36,7 @@ class ApiKeyValidator(Protocol):
 
         """
 
-        ...
-
-
-
+        raise NotImplementedError
 
 
 class InMemoryApiKeyValidator:
@@ -50,19 +44,15 @@ class InMemoryApiKeyValidator:
     """A simple validator backed by a dict; intended for tests and demos.
 
 
-
     Keys are held in plaintext. For anything real use :class:`HashedApiKeyValidator`.
 
     """
 
 
-
     def __init__(self) -> None:
 
 
-
         self._keys: dict[str, tuple[Prosopon, float | None, bool]] = {}
-
 
 
     def register(
@@ -82,7 +72,6 @@ class InMemoryApiKeyValidator:
         """Register `api_key`, optionally with an expiry (Unix epoch seconds)."""
 
         self._keys[api_key] = (principal, expires_at, False)
-
 
 
     def register_simple(
@@ -114,11 +103,9 @@ class InMemoryApiKeyValidator:
         )
 
 
-
     def revoke(self, api_key: str) -> None:
 
         """Mark `api_key` as explicitly revoked without deleting its record.
-
 
 
         Distinguishes "this key was cut off on purpose" from "this key
@@ -134,7 +121,6 @@ class InMemoryApiKeyValidator:
             self._keys[api_key] = (principal, expires_at, True)
 
 
-
     def validate(self, api_key: str) -> Prosopon:
 
         if not api_key:
@@ -142,13 +128,11 @@ class InMemoryApiKeyValidator:
             raise InvalidApiKeyError("API key is empty")
 
 
-
         entry = self._keys.get(api_key)
 
         if entry is None:
 
             raise InvalidApiKeyError("API key is unknown")
-
 
 
         principal, expires_at, revoked = entry
@@ -172,9 +156,6 @@ class InMemoryApiKeyValidator:
         return principal
 
 
-
-
-
 @dataclass
 
 class _KeyRecord:
@@ -190,21 +171,14 @@ class _KeyRecord:
     revoked: bool = False
 
 
-
-
-
 def _digest(salt: bytes, secret: str) -> bytes:
 
     return hashlib.sha256(salt + secret.encode()).digest()
 
 
-
-
-
 class HashedApiKeyValidator:
 
     """Validator that never stores a key, only a per-key salted SHA-256 hash.
-
 
 
     Keys look like ``hrs_<key_id>.<secret>``. The public ``key_id`` finds the
@@ -218,7 +192,6 @@ class HashedApiKeyValidator:
     at :meth:`issue` time, and cannot be recovered afterwards.
 
 
-
     Supports expiry, revocation and scopes (which praxeis the key may call).
 
     Records live in memory; use :meth:`export_records` / :meth:`load_records`
@@ -228,15 +201,12 @@ class HashedApiKeyValidator:
     """
 
 
-
     PREFIX = "hrs_"
-
 
 
     def __init__(self) -> None:
 
         self._records: dict[str, _KeyRecord] = {}
-
 
 
     def issue(
@@ -276,7 +246,6 @@ class HashedApiKeyValidator:
         return f"{self.PREFIX}{key_id}.{secret}"
 
 
-
     @staticmethod
 
     def _split(api_key: str) -> tuple[str, str] | None:
@@ -290,7 +259,6 @@ class HashedApiKeyValidator:
         return (key_id, secret) if key_id and secret else None
 
 
-
     def revoke(self, api_key_or_id: str) -> None:
 
         """Revoke by full key or by ``key_id``."""
@@ -302,7 +270,6 @@ class HashedApiKeyValidator:
         if record is not None:
 
             record.revoked = True
-
 
 
     def validate(self, api_key: str) -> Prosopon:
@@ -348,7 +315,6 @@ class HashedApiKeyValidator:
         return record.principal
 
 
-
     def export_records(self) -> dict[str, dict[str, object]]:
 
         """JSON-friendly snapshot (hashes only, never keys) for persistence."""
@@ -374,7 +340,6 @@ class HashedApiKeyValidator:
         }
 
 
-
     def load_records(self, records: dict[str, dict[str, object]]) -> None:
 
         """Restore a snapshot made by :meth:`export_records`."""
@@ -394,4 +359,3 @@ class HashedApiKeyValidator:
                 revoked=bool(r["revoked"]),
 
             )
-

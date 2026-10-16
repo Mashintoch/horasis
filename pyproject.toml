@@ -92,3 +92,35 @@ implicit_reexport = true
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.pylint.main]
+ignore-paths = ["^tests/.*$", "^examples/.*$"]
+fail-under = 9.0
+
+[tool.pylint.typecheck]
+signature-mutators = ["horasis.access.limen.limen"]
+# cv2 builds its API at import time, so pylint cannot see its members
+generated-members = ["cv2.*"]
+
+[tool.pylint."messages control"]
+disable = [
+    "import-error",
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+    "too-few-public-methods",
+    "too-many-arguments",
+    "too-many-positional-arguments",
+    "too-many-locals",
+    "too-many-instance-attributes",
+    "too-many-return-statements",
+    "too-many-branches",
+    "too-many-nested-blocks",
+    "import-outside-toplevel",
+    "invalid-name",
+    "line-too-long",
+    "duplicate-code",
+    "cyclic-import",
+    "unused-argument",
+    "broad-exception-caught",
+]
