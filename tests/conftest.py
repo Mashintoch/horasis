@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import io
+
 import pytest
+from PIL import Image
 
 from horasis.access.keys import InMemoryApiKeyValidator
 from horasis.access.klimax import Klimax
@@ -19,6 +22,23 @@ from horasis.foundation.schemas import (
     Theoria,
 )
 from horasis.orchestration.organon import Organon
+
+
+def png_bytes(width: int = 8, height: int = 6, color: tuple[int, int, int] = (200, 30, 30)) -> bytes:
+    """A tiny but real PNG, for tests that go through input validation."""
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip `@pytest.mark.integration` tests unless selected with `-m integration`."""
+    if "integration" in (config.getoption("-m") or ""):
+        return
+    skip = pytest.mark.skip(reason="integration test (real models); run with -m integration")
+    for item in items:
+        if item.get_closest_marker("integration") is not None:
+            item.add_marker(skip)
 
 
 class FakeMechane(Mechane):
@@ -94,4 +114,4 @@ def access(kanon: Kanon, validator: InMemoryApiKeyValidator) -> AccessContext:
 
 @pytest.fixture
 def sample_image() -> Physis:
-    return Physis.from_bytes(b"not-really-an-image", source="test-fixture")
+    return Physis.from_bytes(png_bytes(), source="test-fixture")

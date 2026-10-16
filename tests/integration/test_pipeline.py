@@ -5,7 +5,7 @@ from horasis.foundation.kanon import Kanon
 from horasis.foundation.schemas import DetectionResult, Praxis
 from horasis.orchestration.kairos import Kairos, Moment
 from horasis.orchestration.organon import Organon
-from tests.conftest import FakeMechane
+from tests.conftest import FakeMechane, png_bytes
 
 
 def test_organon_resolves_default_backend_and_returns_result(kanon: Kanon, taxis: Taxis, sample_image) -> None:
@@ -57,6 +57,6 @@ def test_end_to_end_client_call_through_skopos(kanon: Kanon, taxis: Taxis, valid
     from horasis.foundation.schemas import Physis
 
     client = Skopos(kanon=kanon, taxis=taxis, validator=validator)
-    result = client.detection.detect(Physis.from_bytes(b"img"), api_key="pro-key")
+    result = client.detection.detect(Physis.from_bytes(png_bytes()), api_key="pro-key")
     assert result.backend == "fake"
     assert result.praxis is Praxis.DETECT

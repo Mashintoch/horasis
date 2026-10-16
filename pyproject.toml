@@ -4,24 +4,28 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "horasis"
-version = "1.0.0"
+dynamic = ["version"]
 description = "A layered, plugin-friendly computer vision SDK with tiered, quota-aware access control."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "Paul Chibueze" }]
 keywords = ["computer-vision", "object-detection", "ocr", "sdk", "image-processing", "image-recognition", "deep-learning"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Image Recognition",
 ]
 dependencies = [
     "pydantic>=2.6",
+    "typing_extensions>=4.6",
     "PyYAML>=6.0",
+    "Pillow>=10.0",
+    "numpy>=1.26",
     "ultralytics>=8.2",
 ]
 
@@ -29,6 +33,13 @@ dependencies = [
 ultralytics = ["ultralytics>=8.2"]
 onnx = ["onnxruntime>=1.17"]
 remote = ["httpx>=0.27"]
+redis = ["redis>=5.0"]
+video = ["opencv-python-headless>=4.8"]
+server = ["fastapi>=0.110", "python-multipart>=0.0.9", "uvicorn>=0.29"]
+otel = ["opentelemetry-api>=1.24"]
+ocr = ["easyocr>=1.7", "pytesseract>=0.3.10"]
+face = ["opencv-python-headless>=4.8"]
+moderation = ["transformers>=4.40", "torch>=2.2"]
 viz = ["Pillow>=10.0", "opencv-python-headless>=4.8", "imageio>=2.34", "imageio-ffmpeg>=0.5"]
 demographics = ["deepface>=0.0.93", "tf-keras>=2.15"]
 dev = [
@@ -36,8 +47,13 @@ dev = [
     "pytest-cov>=5.0",
     "mypy>=1.9",
     "ruff>=0.4",
+    "types-PyYAML",
+    "httpx>=0.27",
 ]
-all = ["horasis[ultralytics,onnx,remote,viz,demographics]"]
+all = ["horasis[ultralytics,onnx,remote,ocr,face,moderation,redis,video,otel,server,viz,demographics]"]
+
+[project.scripts]
+horasis = "horasis.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/mashintoch/horasis"
@@ -46,6 +62,9 @@ Issues = "https://github.com/mashintoch/horasis/issues"
 # Plugins register backends here, e.g.:
 # [project.entry-points."horasis.backends"]
 # my_backend = "my_package.adapter:MyAdapter"
+
+[tool.setuptools.dynamic]
+version = { attr = "horasis.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -56,12 +75,20 @@ horasis = ["py.typed", "config/*.yaml"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = ["integration: needs real models/network; skipped unless run with -m integration"]
 
 [tool.mypy]
-python_version = "3.11"
 strict = true
 packages = ["horasis"]
 
+[[tool.mypy.overrides]]
+module = ["deepface", "deepface.*", "imageio_ffmpeg", "easyocr", "pytesseract", "onnxruntime", "cv2", "transformers", "redis", "opentelemetry", "opentelemetry.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["ultralytics"]
+implicit_reexport = true
+
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"

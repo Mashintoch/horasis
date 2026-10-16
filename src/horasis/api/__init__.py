@@ -6,6 +6,7 @@ and hides every backend, orchestration, and access-control detail behind
 them.
 """
 
+from horasis.api.async_skopos import AsyncSkopos
 from horasis.api.skopos import (
     ContentModerator,
     FaceDetector,
@@ -16,6 +17,7 @@ from horasis.api.skopos import (
 )
 
 __all__ = [
+    "AsyncSkopos",
     "ContentModerator",
     "FaceDetector",
     "ImageClassifier",

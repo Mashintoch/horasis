@@ -22,13 +22,14 @@ from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
 from horasis.access.keys import ApiKeyValidator
-from horasis.access.metron import Metron
+from horasis.access.metron import Metron, UsageReport
 from horasis.access.nomos import Nomos
 from horasis.access.prosopon import Prosopon
+from horasis.access.ratelimit import TokenBucketLimiter
 from horasis.foundation.aisthesis import Aisthesis, NullAisthesis
-from horasis.foundation.kanon import Kanon
+from horasis.foundation.kanon import Kanon, QuotaRule
 from horasis.foundation.schemas import Praxis
-from horasis.foundation.sphalma import Sphalma, ValidationError
+from horasis.foundation.sphalma import QuotaExceededError, Sphalma, ValidationError
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -45,6 +46,7 @@ class AccessContext:
     validator: ApiKeyValidator
     nomos: Nomos
     metron: Metron
+    rate_limiter: TokenBucketLimiter
     aisthesis: Aisthesis = field(default_factory=NullAisthesis)
 
     @classmethod
@@ -54,6 +56,7 @@ class AccessContext:
         kanon: Kanon,
         validator: ApiKeyValidator,
         metron: Metron | None = None,
+        rate_limiter: TokenBucketLimiter | None = None,
         aisthesis: Aisthesis | None = None,
     ) -> AccessContext:
         return cls(
@@ -61,7 +64,58 @@ class AccessContext:
             validator=validator,
             nomos=Nomos(kanon),
             metron=metron or Metron(),
+            rate_limiter=rate_limiter or TokenBucketLimiter(),
             aisthesis=aisthesis or NullAisthesis(),
+        )
+
+
+    def charge(self, principal: Prosopon, praxis: Praxis, *, units: int = 1) -> None:
+        """Rate-limit and meter `units` calls of `praxis` for `principal`.
+
+        Each unit costs ``Kanon.cost_for(praxis)``. All-or-nothing: if any
+        limit rejects, everything taken so far is given back.
+
+        Raises:
+            RateLimitedError: per-minute bucket empty (has ``retry_after``).
+            QuotaExceededError: window quota exhausted (has ``retry_after``,
+                ``limit`` and ``scope``).
+        """
+        rule = self.kanon.tier(principal.tier.value)
+        pid, name = principal.principal_id, praxis.value
+        cost = self.kanon.cost_for(name) * units
+        self.rate_limiter.acquire(pid, name, rule, cost)
+        try:
+            self.metron.check_and_consume(pid, rule.quota, cost=cost)
+            praxis_rule = self._praxis_rule(rule.praxis_quotas.get(name), rule.quota)
+            try:
+                self.metron.check_and_consume(pid, praxis_rule, cost=cost, scope=f"praxis:{name}")
+            except QuotaExceededError:
+                self.metron.refund(pid, rule.quota, cost=cost)
+                raise
+        except QuotaExceededError:
+            self.rate_limiter.refund(pid, name, rule, cost)
+            raise
+
+    @staticmethod
+    def _praxis_rule(specific: QuotaRule | None, overall: QuotaRule) -> QuotaRule:
+        return specific or overall
+
+    def usage(self, principal: Prosopon) -> UsageReport:
+        """Used/remaining units for `principal`, overall and per allowed praxis."""
+        rule = self.kanon.tier(principal.tier.value)
+        pid = principal.principal_id
+        per_praxis = {
+            name: self.metron.window_usage(
+                pid, self._praxis_rule(rule.praxis_quotas.get(name), rule.quota), scope=f"praxis:{name}"
+            )
+            for name in rule.allowed_praxeis
+            if principal.scopes is None or name in principal.scopes
+        }
+        return UsageReport(
+            principal_id=pid,
+            tier=principal.tier.value,
+            overall=self.metron.window_usage(pid, rule.quota),
+            per_praxis=per_praxis,
         )
 
 
@@ -82,7 +136,7 @@ def limen(praxis: Praxis) -> Callable[[F], F]:
     def decorator(func: F) -> F:
         @functools.wraps(func)
         def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
-            access: AccessContext = getattr(self, "_access", None)
+            access: AccessContext | None = getattr(self, "_access", None)
             if access is None:
                 raise ValidationError(
                     f"{type(self).__name__} has no AccessContext; cannot enforce @limen"
@@ -94,8 +148,7 @@ def limen(praxis: Praxis) -> Callable[[F], F]:
 
             principal: Prosopon = access.validator.validate(api_key)
             access.nomos.authorize(principal, praxis)
-            rule = access.kanon.tier(principal.tier.value)
-            access.metron.check_and_consume(principal.principal_id, rule.quota)
+            access.charge(principal, praxis)
 
             access.aisthesis.on_call_start(praxis=praxis.value, principal_id=principal.principal_id)
             start = time.perf_counter()

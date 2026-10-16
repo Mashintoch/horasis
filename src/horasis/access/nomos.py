@@ -36,3 +36,13 @@ class Nomos:
                     "praxis": praxis.value,
                 },
             )
+
+        if principal.scopes is not None and praxis.value not in principal.scopes:
+            raise AccessDeniedError(
+                f"API key is not scoped for {praxis.value!r}",
+                context={
+                    "principal_id": principal.principal_id,
+                    "praxis": praxis.value,
+                    "scopes": list(principal.scopes),
+                },
+            )

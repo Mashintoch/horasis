@@ -4,14 +4,17 @@ import logging
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterable
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar, Generic, Literal, TypeVar
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing_extensions import Self
 
-from horasis.foundation.sphalma import ValidationError
+from horasis.foundation.sphalma import Sphalma, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +27,8 @@ class Praxis(str, Enum):
     OCR = "ocr"
     FACE = "face"
     MODERATE = "moderate"
+    SEGMENT = "segment"
+    POSE = "pose"
 
 
 class Doxa(BaseModel):
@@ -43,8 +48,17 @@ class Doxa(BaseModel):
 class Physis(BaseModel):
     """Backend-agnostic representation of an input image.
 
-    Exactly one of ``path``, ``data``, or ``array_shape`` is expected to be
-    meaningful for a given source; adapters decide how to load the bytes.
+    Build one with the ``from_*`` constructors, or let the public API do it
+    for you. Backends should read pixels through
+    :func:`horasis.foundation.imaging.load_rgb`, never from ``path``/``data``
+    directly -- that is what guarantees size limits and EXIF orientation.
+
+    Attributes:
+        source: Original source identifier: a path, URL, ``"<bytes>"``, etc.
+        path: Local file path, when the image came from one.
+        data: Encoded image bytes, when supplied and not yet decoded.
+        pixels: Decoded, upright RGB ``PIL.Image`` once the image was loaded.
+        width, height: Decoded size in pixels, once known.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
@@ -52,14 +66,18 @@ class Physis(BaseModel):
     source: str = Field(description="Original source identifier: a path, URL, or '<bytes>'.")
     path: str | Path | None = None
     data: bytes | None = None
+    pixels: Any = Field(default=None, exclude=True, repr=False)
     width: int | None = None
     height: int | None = None
 
     @classmethod
     def from_path(cls, path: str | Path) -> Physis:
+        """Wrap a local file path. URLs are rejected; use `from_url` explicitly."""
         path_str = str(path)
         if urlparse(path_str).scheme in ("http", "https"):
-            return cls(source=path_str, path=path_str)
+            raise ValidationError(
+                f"{path_str!r} is a URL; use Physis.from_url() (network fetch is opt-in)"
+            )
         return cls(source=path_str, path=Path(path))
 
     @classmethod
@@ -67,24 +85,41 @@ class Physis(BaseModel):
         return cls(source=source, data=data)
 
     @classmethod
-    def from_url(cls, url: str, *, timeout: float = 30.0) -> Physis:
-        """Fetch `url` and wrap the downloaded bytes as a `Physis`.
+    def from_pil(cls, image: Any) -> Physis:
+        """Wrap a ``PIL.Image.Image`` (decoded and EXIF-corrected immediately)."""
+        from horasis.foundation.imaging import to_physis
 
-        Raises:
-            ValidationError: if the URL cannot be fetched.
-        """
-
-        try:
-            with urllib.request.urlopen(url, timeout=timeout) as response:
-                data = response.read()
-        except Exception as exc:
-            raise ValidationError(f"Failed to fetch image from URL: {url}") from exc
-        return cls(source=url, data=data)
+        return to_physis(image)
 
     @classmethod
-    def from_source(cls, source: str) -> Physis:
-        """Build a `Physis` from a string that is either a URL or a local file path."""
+    def from_array(cls, array: Any) -> Physis:
+        """Wrap a numpy array in RGB order (see :func:`~horasis.foundation.imaging.array_to_image`)."""
+        from horasis.foundation.imaging import to_physis
+
+        return to_physis(array)
+
+    @classmethod
+    def from_url(cls, url: str, *, timeout: float = 30.0, max_bytes: int = 20 * 1024 * 1024) -> Physis:
+        """Fetch `url` and wrap the downloaded bytes as a `Physis`.
+
+        Calling this directly *is* the opt-in to a network request.
+
+        Raises:
+            ValidationError: if the URL cannot be fetched or exceeds `max_bytes`.
+        """
+        from horasis.foundation.imaging import fetch_url
+
+        return cls(source=url, data=fetch_url(url, timeout=timeout, max_bytes=max_bytes))
+
+    @classmethod
+    def from_source(cls, source: str, *, allow_urls: bool = False) -> Physis:
+        """Build a `Physis` from a local file path, or a URL if `allow_urls` is True."""
         if source.startswith(("http://", "https://")):
+            if not allow_urls:
+                raise ValidationError(
+                    "URL inputs are disabled; pass allow_urls=True (or set "
+                    "Kanon.inputs.allow_urls) to opt in."
+                )
             return cls.from_url(source)
         return cls.from_path(source)
 
@@ -98,7 +133,6 @@ def _check_url_is_video(url: str, *, timeout: float) -> None:
     blocking a URL we simply couldn't check. Only raises when a
     Content-Type was actually returned and it clearly isn't video.
     """
-    import urllib.request
 
     content_type: str | None = None
     attempts: list[dict[str, Any]] = [
@@ -204,14 +238,30 @@ class BoundingBox(BaseModel):
         return v
 
 
+Point = tuple[float, float]
+
+
 class Glyph(BaseModel):
-    """A single recognized unit of text produced by an OCR task."""
+    """A recognized unit of text produced by an OCR task.
+
+    Attributes:
+        text: The recognized string.
+        confidence: Recognition confidence.
+        box: Axis-aligned bounding box.
+        polygon: The tight outline as 4+ ``(x, y)`` points, when the engine
+            provides one (rotated or skewed text).
+        line_index: Zero-based reading-order line this glyph belongs to.
+        level: ``"word"`` for engine segments, ``"line"`` for merged lines.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     text: str
     confidence: Doxa
     box: BoundingBox | None = None
+    polygon: list[Point] | None = None
+    line_index: int | None = None
+    level: Literal["word", "line"] = "word"
 
 
 class Theoria(BaseModel):
@@ -230,6 +280,61 @@ class Theoria(BaseModel):
     backend: str
     latency_ms: float
     created_at: float = Field(default_factory=lambda: time.time())
+
+    # Name of the list field holding this result's items (used by `filter`).
+    _items_field: ClassVar[str | None] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """The result as plain JSON-compatible Python data."""
+        return self.model_dump(mode="json")
+
+    def to_json(self, *, indent: int | None = None) -> str:
+        """The result as a JSON string."""
+        return self.model_dump_json(indent=indent)
+
+    def filter(
+        self, *, min_conf: float | None = None, labels: Iterable[str] | None = None
+    ) -> Self:
+        """Return a copy keeping only items that match.
+
+        Args:
+            min_conf: Keep items with confidence >= this.
+            labels: Keep items whose label (class name, OCR text, or
+                moderation category) is in this collection.
+
+        Results without a list of items (none today) are returned unchanged.
+        """
+        field = self._items_field
+        if field is None:
+            return self
+        wanted = set(labels) if labels is not None else None
+        kept = [
+            item
+            for item in getattr(self, field)
+            if (min_conf is None or item.confidence.value >= min_conf)
+            and (wanted is None or _label_of(item) in wanted)
+        ]
+        return self.model_copy(update={field: kept})
+
+    def draw(self, image: Any, **options: Any) -> Any:
+        """Return a PIL image with this result drawn on `image` (nothing is saved).
+
+        Needs the optional ``viz`` extra only for video; images need Pillow,
+        which is a core dependency. Extra `options` go to the drawing code
+        (``show_labels``, ``show_confidence``, ``box_color``, ``line_width``,
+        ``font_size``, ``text_color``).
+        """
+        from horasis.viz import draw_result
+
+        return draw_result(image, self, **options)
+
+
+def _label_of(item: Any) -> str:
+    for attr in ("label", "category", "text"):
+        value = getattr(item, attr, None)
+        if isinstance(value, str):
+            return value
+    return ""
 
 
 class FaceEstimate(BaseModel):
@@ -264,6 +369,26 @@ class DetectionResult(Theoria):
 
     praxis: Praxis = Praxis.DETECT
     detections: list[Detection] = Field(default_factory=list)
+    _items_field: ClassVar[str | None] = "detections"
+
+    def to_coco(
+        self,
+        *,
+        image_id: int = 1,
+        file_name: str | None = None,
+        width: int | None = None,
+        height: int | None = None,
+        category_ids: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        """Export as a COCO-format dict (``images``, ``annotations``, ``categories``).
+
+        Boxes become ``[x, y, width, height]``. Category ids come from
+        `category_ids` if given, otherwise 1..N over the sorted labels seen.
+        The model score is kept as an extra ``score`` field on each annotation.
+        """
+        return detections_to_coco(
+            [(image_id, file_name, width, height, self.detections)], category_ids=category_ids
+        )
 
     def annotate(
         self,
@@ -315,6 +440,42 @@ class VideoDetectionResult(Theoria):
     frame_count: int = 0
     fps: float | None = None
 
+    def filter(
+        self, *, min_conf: float | None = None, labels: Iterable[str] | None = None
+    ) -> Self:
+        """Filter the detections inside every frame (frames themselves are kept)."""
+        wanted = set(labels) if labels is not None else None
+        frames = [
+            f.model_copy(
+                update={
+                    "detections": [
+                        d
+                        for d in f.detections
+                        if (min_conf is None or d.confidence.value >= min_conf)
+                        and (wanted is None or d.label in wanted)
+                    ]
+                }
+            )
+            for f in self.frames
+        ]
+        return self.model_copy(update={"frames": frames})
+
+    def to_coco(
+        self,
+        *,
+        width: int | None = None,
+        height: int | None = None,
+        category_ids: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        """COCO export with one "image" per processed frame (id = frame index + 1)."""
+        return detections_to_coco(
+            [
+                (f.frame_index + 1, f"frame_{f.frame_index:06d}", width, height, f.detections)
+                for f in self.frames
+            ],
+            category_ids=category_ids,
+        )
+
     def annotate(
         self,
         video: Any,
@@ -357,6 +518,7 @@ class ClassificationResult(Theoria):
 
     praxis: Praxis = Praxis.CLASSIFY
     entries: list[ClassificationEntry] = Field(default_factory=list)
+    _items_field: ClassVar[str | None] = "entries"
 
     @property
     def top(self) -> ClassificationEntry | None:
@@ -366,21 +528,78 @@ class ClassificationResult(Theoria):
 
 
 class OcrResult(Theoria):
-    """Result of an OCR / text-extraction :class:`Praxis`."""
+    """Result of an OCR / text-extraction :class:`Praxis`.
+
+    ``glyphs`` are the engine's word-level segments in reading order. When
+    they carry a ``line_index``, :attr:`lines` merges them into line-level
+    glyphs and :attr:`text` separates lines with newlines.
+    """
 
     praxis: Praxis = Praxis.OCR
     glyphs: list[Glyph] = Field(default_factory=list)
+    _items_field: ClassVar[str | None] = "glyphs"
+
+    @property
+    def lines(self) -> list[Glyph]:
+        """Line-level glyphs (text joined left to right, mean confidence, union box)."""
+        grouped: dict[int, list[Glyph]] = {}
+        for g in self.glyphs:
+            if g.line_index is not None:
+                grouped.setdefault(g.line_index, []).append(g)
+        out: list[Glyph] = []
+        for idx in sorted(grouped):
+            words = grouped[idx]
+            boxes = [w.box for w in words if w.box is not None]
+            union = (
+                BoundingBox(
+                    x_min=min(b.x_min for b in boxes),
+                    y_min=min(b.y_min for b in boxes),
+                    x_max=max(b.x_max for b in boxes),
+                    y_max=max(b.y_max for b in boxes),
+                )
+                if boxes
+                else None
+            )
+            mean = sum(w.confidence.value for w in words) / len(words)
+            out.append(
+                Glyph(
+                    text=" ".join(w.text for w in words),
+                    confidence=Doxa(value=mean),
+                    box=union,
+                    line_index=idx,
+                    level="line",
+                )
+            )
+        return out
 
     @property
     def text(self) -> str:
+        lines = self.lines
+        if lines and all(g.line_index is not None for g in self.glyphs):
+            return "\n".join(line.text for line in lines)
         return " ".join(g.text for g in self.glyphs)
+
+
+class Face(Detection):
+    """A detected face: a box plus optional 5-point landmarks.
+
+    Detection only -- no identity is recognized or inferred.
+
+    Attributes:
+        landmarks: Named ``(x, y)`` points: ``right_eye``, ``left_eye``,
+            ``nose``, ``mouth_right``, ``mouth_left`` (as seen in the image,
+            i.e. "right" is the viewer's left, following YuNet's convention).
+    """
+
+    landmarks: dict[str, Point] | None = None
 
 
 class FaceResult(Theoria):
     """Result of a face-detection :class:`Praxis`."""
 
     praxis: Praxis = Praxis.FACE
-    faces: list[Detection] = Field(default_factory=list)
+    faces: list[Face] = Field(default_factory=list)
+    _items_field: ClassVar[str | None] = "faces"
 
     def annotate(
         self,
@@ -419,23 +638,159 @@ class ModerationResult(Theoria):
 
     praxis: Praxis = Praxis.MODERATE
     labels: list[ModerationLabel] = Field(default_factory=list)
+    _items_field: ClassVar[str | None] = "labels"
 
     @property
     def is_flagged(self) -> bool:
         return any(label.flagged for label in self.labels)
 
 
-class FaceEstimate(BaseModel):
-    """Rough, model-estimated attributes for a detected face.
+def detections_to_coco(
+    images: Iterable[tuple[int, str | None, int | None, int | None, list[Detection]]],
+    *,
+    category_ids: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    """Build a COCO detection dict from ``(image_id, file_name, width, height, detections)``."""
+    entries = list(images)
+    if category_ids is None:
+        labels = sorted({d.label for _, _, _, _, dets in entries for d in dets})
+        category_ids = {name: i for i, name in enumerate(labels, start=1)}
+    coco_images: list[dict[str, Any]] = []
+    annotations: list[dict[str, Any]] = []
+    next_id = 1
+    for image_id, file_name, width, height, dets in entries:
+        record: dict[str, Any] = {"id": image_id}
+        if file_name is not None:
+            record["file_name"] = file_name
+        if width is not None:
+            record["width"] = width
+        if height is not None:
+            record["height"] = height
+        coco_images.append(record)
+        for d in dets:
+            if d.label not in category_ids:
+                continue
+            w = d.box.x_max - d.box.x_min
+            h = d.box.y_max - d.box.y_min
+            annotations.append(
+                {
+                    "id": next_id,
+                    "image_id": image_id,
+                    "category_id": category_ids[d.label],
+                    "bbox": [d.box.x_min, d.box.y_min, w, h],
+                    "area": w * h,
+                    "iscrowd": 0,
+                    "score": d.confidence.value,
+                }
+            )
+            next_id += 1
+    return {
+        "images": coco_images,
+        "annotations": annotations,
+        "categories": [{"id": cid, "name": name} for name, cid in category_ids.items()],
+    }
 
-    These are statistical estimates from a computer vision model, not
-    verified facts -- treat them as approximate, expect real error rates,
-    and do not use them as the sole basis for any consequential decision
-    about a person.
+
+T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class BatchItem(Generic[T]):
+    """Outcome for one input of a ``*_batch`` call: a result or an error, never both.
+
+    Attributes:
+        index: Position of the input in the submitted list.
+        source: Short description of the input (path, ``"<bytes>"``, ...).
+        result: The result, when the item succeeded.
+        error: The `Sphalma` that stopped this item (quota, validation, backend...).
     """
+
+    index: int
+    source: str
+    result: T | None = None
+    error: Sphalma | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+    def unwrap(self) -> T:
+        """The result, or raise this item's error."""
+        if self.error is not None:
+            raise self.error
+        assert self.result is not None
+        return self.result
+
+
+class FrameResult(BaseModel):
+    """Detections for one frame of a stream, with its position in the source."""
 
     model_config = ConfigDict(frozen=True)
 
-    estimated_age: float | None = None
-    estimated_gender: str | None = None
-    gender_confidence: Doxa | None = None
+    frame_index: int
+    timestamp_s: float
+    result: DetectionResult
+
+
+class Segment(Detection):
+    """A detected instance with its outline.
+
+    Attributes:
+        polygon: The instance mask's contour as ``(x, y)`` pixel points.
+    """
+
+    polygon: list[Point] = Field(default_factory=list)
+
+
+class SegmentationResult(Theoria):
+    """Result of an instance-segmentation :class:`Praxis`."""
+
+    praxis: Praxis = Praxis.SEGMENT
+    segments: list[Segment] = Field(default_factory=list)
+    _items_field: ClassVar[str | None] = "segments"
+
+
+COCO_KEYPOINTS: tuple[str, ...] = (
+    "nose",
+    "left_eye",
+    "right_eye",
+    "left_ear",
+    "right_ear",
+    "left_shoulder",
+    "right_shoulder",
+    "left_elbow",
+    "right_elbow",
+    "left_wrist",
+    "right_wrist",
+    "left_hip",
+    "right_hip",
+    "left_knee",
+    "right_knee",
+    "left_ankle",
+    "right_ankle",
+)
+
+
+class Keypoint(BaseModel):
+    """One body landmark in pixel coordinates."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    x: float
+    y: float
+    confidence: Doxa
+
+
+class Pose(Detection):
+    """A detected person with body keypoints (COCO-17 order for standard models)."""
+
+    keypoints: list[Keypoint] = Field(default_factory=list)
+
+
+class PoseResult(Theoria):
+    """Result of a pose-estimation :class:`Praxis`."""
+
+    praxis: Praxis = Praxis.POSE
+    poses: list[Pose] = Field(default_factory=list)
+    _items_field: ClassVar[str | None] = "poses"

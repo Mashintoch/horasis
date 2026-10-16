@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 # pylint: disable=import-outside-toplevel,too-many-arguments,too-many-locals,no-member,mixed-line-endings
+from collections.abc import Sequence
 
 import io
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from horasis.foundation.imaging import load_rgb, to_physis
 from horasis.foundation.schemas import (
+    ClassificationResult,
     Detection,
     DetectionResult,
     FaceResult,
     Kinesis,
+    ModerationResult,
+    OcrResult,
     Physis,
+    PoseResult,
+    SegmentationResult,
     VideoDetectionResult,
 )
 from horasis.foundation.sphalma import ValidationError, VisualizationUnavailableError
@@ -35,25 +42,10 @@ def _load_pillow() -> Any:
     return Image, ImageDraw, ImageFont
 
 
-def _open_image(image: str | Path | bytes | Physis) -> PILImage:
-    Image, _, _ = _load_pillow()
-
-    if isinstance(image, Physis):
-        physis = image
-    elif isinstance(image, bytes):
-        physis = Physis.from_bytes(image)
-    elif isinstance(image, str):
-        physis = Physis.from_source(image)
-    elif isinstance(image, Path):
-        physis = Physis.from_path(image)
-    else:
-        raise ValidationError(f"Unsupported image input type: {type(image).__name__}")
-
-    if physis.data is not None:
-        return Image.open(io.BytesIO(physis.data)).convert("RGB")
-    if physis.path is not None:
-        return Image.open(physis.path).convert("RGB")
-    raise ValidationError("Physis has neither `path` nor `data` set")
+def _open_image(image: Any) -> PILImage:
+    """Load any supported image input as upright RGB via the shared loader."""
+    _load_pillow()
+    return load_rgb(to_physis(image))
 
 
 def _color_for_label(label: str) -> tuple[int, int, int]:
@@ -66,7 +58,7 @@ def _color_for_label(label: str) -> tuple[int, int, int]:
 
 def _draw_boxes(
     image: PILImage,
-    detections: list[Detection],
+    detections: Sequence[Detection],
     *,
     show_labels: bool,
     show_confidence: bool,
@@ -311,7 +303,7 @@ def _video_capture_source(video: str | Path | bytes | Kinesis) -> tuple[Any, str
     if kinesis.data is not None:
         import tempfile
 
-        temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+        temp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")  # noqa: SIM115
         temp.write(kinesis.data)
         temp.close()
         return temp.name, temp.name
@@ -414,3 +406,149 @@ def render_video(
             os.unlink(temp_file)
 
     return output_path
+
+
+def render_ocr(
+    image: Any,
+    result: OcrResult,
+    *,
+    box_color: tuple[int, int, int] | None = None,
+    text_color: tuple[int, int, int] = (255, 255, 255),
+    line_width: int = 2,
+    font_size: int = 14,
+    show_confidence: bool = False,
+    **_ignored: Any,
+) -> PILImage:
+    """Draw each OCR glyph's polygon (or box) with its text; nothing is saved."""
+    _, ImageDraw, ImageFont = _load_pillow()
+    annotated = _open_image(image).copy()
+    draw = ImageDraw.Draw(annotated)
+    try:
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except OSError:
+        font = ImageFont.load_default()
+    for g in result.glyphs:
+        color = box_color or (230, 40, 40)
+        if g.polygon:
+            draw.polygon([tuple(pt) for pt in g.polygon], outline=color, width=line_width)
+            x, y = min(p[0] for p in g.polygon), min(p[1] for p in g.polygon)
+        elif g.box is not None:
+            draw.rectangle(
+                [(g.box.x_min, g.box.y_min), (g.box.x_max, g.box.y_max)],
+                outline=color,
+                width=line_width,
+            )
+            x, y = g.box.x_min, g.box.y_min
+        else:
+            continue
+        caption = f"{g.text} {g.confidence.value:.2f}" if show_confidence else g.text
+        draw.text((x, max(y - font_size - 2, 0)), caption, fill=color, font=font)
+    return annotated
+
+
+def render_caption(
+    image: Any,
+    lines: Sequence[str],
+    *,
+    text_color: tuple[int, int, int] = (255, 255, 255),
+    font_size: int = 16,
+    **_ignored: Any,
+) -> PILImage:
+    """Return a copy of `image` with a text banner of `lines` along the top."""
+    _, ImageDraw, ImageFont = _load_pillow()
+    annotated = _open_image(image).copy()
+    draw = ImageDraw.Draw(annotated)
+    try:
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except OSError:
+        font = ImageFont.load_default()
+    banner_h = (font_size + 4) * max(len(lines), 1) + 6
+    draw.rectangle([(0, 0), (annotated.width, banner_h)], fill=(0, 0, 0))
+    for i, line in enumerate(lines):
+        draw.text((4, 3 + i * (font_size + 4)), line, fill=text_color, font=font)
+    return annotated
+
+
+_SKELETON = (
+    (0, 1), (0, 2), (1, 3), (2, 4), (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
+    (5, 11), (6, 12), (11, 12), (11, 13), (13, 15), (12, 14), (14, 16),
+)  # fmt: skip
+
+
+def render_segments(image: Any, result: SegmentationResult, *, line_width: int = 2, **_ignored: Any) -> PILImage:
+    """Draw each segment's outline (and label colour) on a copy of `image`."""
+    _, ImageDraw, _ = _load_pillow()
+    annotated = _open_image(image).copy()
+    draw = ImageDraw.Draw(annotated)
+    for seg in result.segments:
+        color = _color_for_label(seg.label)
+        if len(seg.polygon) >= 3:
+            draw.polygon([tuple(p) for p in seg.polygon], outline=color, width=line_width)
+        else:
+            draw.rectangle(
+                [(seg.box.x_min, seg.box.y_min), (seg.box.x_max, seg.box.y_max)],
+                outline=color,
+                width=line_width,
+            )
+    return annotated
+
+
+def render_poses(
+    image: Any, result: PoseResult, *, line_width: int = 2, min_keypoint_conf: float = 0.3, **_ignored: Any
+) -> PILImage:
+    """Draw each person's skeleton and keypoints (COCO-17 models) on a copy of `image`."""
+    _, ImageDraw, _ = _load_pillow()
+    annotated = _open_image(image).copy()
+    draw = ImageDraw.Draw(annotated)
+    for pose in result.poses:
+        color = _color_for_label(pose.label)
+        pts = pose.keypoints
+        if len(pts) == 17:
+            for a, b in _SKELETON:
+                if min(pts[a].confidence.value, pts[b].confidence.value) >= min_keypoint_conf:
+                    draw.line([(pts[a].x, pts[a].y), (pts[b].x, pts[b].y)], fill=color, width=line_width)
+        for kp in pts:
+            if kp.confidence.value >= min_keypoint_conf:
+                r = line_width + 1
+                draw.ellipse([(kp.x - r, kp.y - r), (kp.x + r, kp.y + r)], fill=color)
+    return annotated
+
+
+def draw_result(image: Any, result: Any, **options: Any) -> PILImage:
+    """Draw any image-based result on `image` and return it, without saving.
+
+    Detections and faces get boxes, OCR gets polygons and text, and
+    classification / moderation results get a caption banner.
+    """
+    if isinstance(result, OcrResult):
+        return render_ocr(image, result, **options)
+    if isinstance(result, ClassificationResult):
+        top = sorted(result.entries, key=lambda e: -e.confidence.value)[:5]
+        return render_caption(image, [f"{e.label} {e.confidence.value:.2f}" for e in top], **options)
+    if isinstance(result, ModerationResult):
+        return render_caption(
+            image,
+            [f"{'FLAGGED ' if lb.flagged else ''}{lb.category} {lb.confidence.value:.2f}" for lb in result.labels],
+            **options,
+        )
+    if isinstance(result, SegmentationResult):
+        return render_segments(image, result, **options)
+    if isinstance(result, PoseResult):
+        return render_poses(image, result, **options)
+    items = getattr(result, "detections", None) or getattr(result, "faces", None)
+    if items is None and not hasattr(result, "frames"):
+        items = []
+    if items is None:
+        raise ValidationError("Video results cannot be drawn on a single image; use annotate()")
+    keys = {"show_labels", "show_confidence", "box_color", "text_color", "line_width", "font_size"}
+    kwargs = {k: v for k, v in options.items() if k in keys}
+    return _draw_boxes(
+        _open_image(image),
+        items,
+        show_labels=kwargs.get("show_labels", True),
+        show_confidence=kwargs.get("show_confidence", True),
+        box_color=kwargs.get("box_color"),
+        text_color=kwargs.get("text_color", (255, 255, 255)),
+        line_width=kwargs.get("line_width", 3),
+        font_size=kwargs.get("font_size", 16),
+    )

@@ -14,8 +14,10 @@ Quick start:
     >>> result = client.detection.detect("photo.jpg", api_key="demo-key")
 """
 
-from horasis.access.keys import ApiKeyValidator, InMemoryApiKeyValidator
+from horasis.access.keys import ApiKeyValidator, HashedApiKeyValidator, InMemoryApiKeyValidator
 from horasis.access.klimax import Klimax
+from horasis.access.metron import UsageReport
+from horasis.api.async_skopos import AsyncSkopos
 from horasis.api.skopos import (
     ContentModerator,
     FaceDetector,
@@ -24,11 +26,14 @@ from horasis.api.skopos import (
     Skopos,
     TextExtractor,
 )
-from horasis.foundation.kanon import Kanon
+from horasis.foundation.kanon import InputPolicy, Kanon
 from horasis.foundation.schemas import (
+    BatchItem,
     ClassificationResult,
     DetectionResult,
+    Face,
     FaceResult,
+    Glyph,
     Kinesis,
     ModerationResult,
     OcrResult,
@@ -43,43 +48,56 @@ from horasis.foundation.sphalma import (
     ConfigurationError,
     ExpiredApiKeyError,
     InvalidApiKeyError,
+    NoBackendError,
     QuotaExceededError,
+    RateLimitedError,
+    RemoteError,
     RevokedApiKeyError,
     Sphalma,
     ValidationError,
     VisualizationUnavailableError,
 )
 
-__version__ = "0.1.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "AccessDeniedError",
     "AdapterError",
     "ApiKeyValidator",
+    "AsyncSkopos",
     "BackendUnavailableError",
+    "BatchItem",
     "ClassificationResult",
     "ConfigurationError",
     "ContentModerator",
     "DetectionResult",
     "ExpiredApiKeyError",
+    "Face",
     "FaceDetector",
     "FaceResult",
+    "Glyph",
+    "HashedApiKeyValidator",
     "ImageClassifier",
     "InMemoryApiKeyValidator",
+    "InputPolicy",
     "InvalidApiKeyError",
     "Kanon",
     "Kinesis",
     "Klimax",
     "ModerationResult",
+    "NoBackendError",
     "ObjectDetector",
     "OcrResult",
     "Physis",
     "Praxis",
     "QuotaExceededError",
+    "RateLimitedError",
+    "RemoteError",
     "RevokedApiKeyError",
     "Skopos",
     "Sphalma",
     "TextExtractor",
+    "UsageReport",
     "ValidationError",
     "VideoDetectionResult",
     "VisualizationUnavailableError",

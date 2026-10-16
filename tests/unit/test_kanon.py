@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
-
 import pytest
 from pydantic import ValidationError
 
@@ -60,7 +58,7 @@ def test_from_yaml_loads_shipped_default_config() -> None:
 
 def test_kanon_is_immutable() -> None:
     kanon = Kanon.default()
-    with pytest.raises(FrozenInstanceError):
+    with pytest.raises(ValidationError):
         kanon.default_backend = "onnx"  # type: ignore[misc]
 
 
@@ -75,3 +73,25 @@ def test_tier_rule_default_allowed_praxeis() -> None:
     rule = TierRule(name="x", quota=QuotaRule(limit=1, window_seconds=1))
     assert "detect" in rule.allowed_praxeis
     assert "moderate" in rule.allowed_praxeis
+
+
+def test_shipped_default_yaml_loads_with_safe_input_defaults() -> None:
+    from importlib.resources import files
+
+    path = files("horasis") / "config" / "default.yaml"
+    kanon = Kanon.from_yaml(str(path))
+    assert kanon.inputs.allow_urls is False
+    assert set(kanon.tiers) == {"free", "pro", "enterprise"}
+
+
+def test_moderation_threshold_per_category_override() -> None:
+    kanon = Kanon(moderation_threshold=0.4, moderation_thresholds={"nsfw": 0.9})
+    assert kanon.moderation_threshold_for("nsfw") == 0.9
+    assert kanon.moderation_threshold_for("violence") == 0.4
+
+
+def test_input_policy_rejects_nonsense_limits() -> None:
+    from horasis.foundation.kanon import InputPolicy
+
+    with pytest.raises(ValidationError):
+        InputPolicy(max_bytes=0)

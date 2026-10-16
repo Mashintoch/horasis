@@ -3,8 +3,12 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import numpy as np
+
 from horasis.backend.mechane import Mechane
+from horasis.foundation.imaging import load_rgb
 from horasis.foundation.schemas import (
+    COCO_KEYPOINTS,
     BoundingBox,
     ClassificationEntry,
     ClassificationResult,
@@ -13,13 +17,18 @@ from horasis.foundation.schemas import (
     Doxa,
     FaceEstimate,
     FrameDetections,
+    Keypoint,
     Kinesis,
     Physis,
+    Pose,
+    PoseResult,
     Praxis,
+    Segment,
+    SegmentationResult,
     Theoria,
     VideoDetectionResult,
 )
-from horasis.foundation.sphalma import AdapterError, BackendUnavailableError
+from horasis.foundation.sphalma import AdapterError, BackendUnavailableError, Sphalma
 from horasis.viz import _open_video_writer
 
 
@@ -34,7 +43,9 @@ class UltralyticsAdapter(Mechane):
         name: Registry name; defaults to `"ultralytics"`.
     """
 
-    supported_praxeis = frozenset({Praxis.DETECT, Praxis.CLASSIFY})
+    supported_praxeis = frozenset(
+        {Praxis.DETECT, Praxis.CLASSIFY, Praxis.SEGMENT, Praxis.POSE}
+    )
     supported_video_praxeis = frozenset({Praxis.DETECT})
     supported_video_annotate_praxeis = frozenset({Praxis.DETECT})
 
@@ -44,12 +55,18 @@ class UltralyticsAdapter(Mechane):
         detect_model: str = "yolo11n.pt",
         classify_model: str = "yolo11n-cls.pt",
         name: str = "ultralytics",
+        segment_model: str = "yolo11n-seg.pt",
+        pose_model: str = "yolo11n-pose.pt",
     ) -> None:
         self.name = name
         self._detect_model_path = detect_model
         self._classify_model_path = classify_model
         self._detect_model: Any = None
         self._classify_model: Any = None
+        self._segment_model_path = segment_model
+        self._pose_model_path = pose_model
+        self._segment_model: Any = None
+        self._pose_model: Any = None
 
     def _load_ultralytics(self) -> Any:
         try:
@@ -61,6 +78,28 @@ class UltralyticsAdapter(Mechane):
             ) from exc
         return YOLO
 
+    def is_loaded(self) -> bool:
+        return any(
+            m is not None
+            for m in (
+                self._detect_model,
+                self._classify_model,
+                self._segment_model,
+                self._pose_model,
+            )
+        )
+
+    def unload(self) -> None:
+        self._detect_model = None
+        self._classify_model = None
+        self._segment_model = None
+        self._pose_model = None
+
+    def _with_device(self, options: dict[str, Any]) -> dict[str, Any]:
+        """Add Ultralytics' ``device`` option from the effective device (auto = leave to it)."""
+        device = {"cpu": "cpu", "cuda": "cuda:0", "mps": "mps"}.get(self.effective_device())
+        return options if device is None or "device" in options else {**options, "device": device}
+
     def warm_up(self) -> None:
         YOLO = self._load_ultralytics()
         if self._detect_model is None:
@@ -68,18 +107,24 @@ class UltralyticsAdapter(Mechane):
         if self._classify_model is None:
             self._classify_model = YOLO(self._classify_model_path)
 
-    def infer(self, praxis: Praxis, image: Physis, **options: object) -> Theoria:
+    def infer(self, praxis: Praxis, image: Physis, **options: Any) -> Theoria:
         if not self.supports(praxis):
             raise BackendUnavailableError(
                 f"UltralyticsAdapter does not support praxis {praxis.value!r}"
             )
+        options = self._with_device(options)
         start = time.perf_counter()
+        result: Theoria
         try:
             if praxis is Praxis.DETECT:
                 result = self._infer_detect(image, **options)
-            else:
+            elif praxis is Praxis.CLASSIFY:
                 result = self._infer_classify(image, **options)
-        except BackendUnavailableError:
+            elif praxis is Praxis.SEGMENT:
+                result = self._infer_segment(image, **options)
+            else:
+                result = self._infer_pose(image, **options)
+        except Sphalma:
             raise
         except Exception as exc:
             raise AdapterError(
@@ -88,15 +133,16 @@ class UltralyticsAdapter(Mechane):
         latency_ms = (time.perf_counter() - start) * 1000
         return result.model_copy(update={"latency_ms": latency_ms})
 
-    def infer_video(self, praxis: Praxis, video: Kinesis, **options: object) -> Theoria:
+    def infer_video(self, praxis: Praxis, video: Kinesis, **options: Any) -> Theoria:
         if not self.supports_video(praxis):
             raise BackendUnavailableError(
                 f"UltralyticsAdapter does not support video for praxis {praxis.value!r}"
             )
+        options = self._with_device(options)
         start = time.perf_counter()
         try:
             result = self._infer_detect_video(video, **options)
-        except BackendUnavailableError:
+        except Sphalma:
             raise
         except Exception as exc:
             raise AdapterError(
@@ -106,19 +152,20 @@ class UltralyticsAdapter(Mechane):
         return result.model_copy(update={"latency_ms": latency_ms})
 
     def infer_video_and_annotate(
-        self, praxis: Praxis, video: Kinesis, *, output_path: object, **options: object
+        self, praxis: Praxis, video: Kinesis, *, output_path: Any, **options: Any
     ) -> tuple[Theoria, object]:
         if not self.supports_video_annotate(praxis):
             raise BackendUnavailableError(
                 f"UltralyticsAdapter does not support combined video "
                 f"detect-and-annotate for praxis {praxis.value!r}"
             )
+        options = self._with_device(options)
         start = time.perf_counter()
         try:
             result, out_path = self._infer_detect_video_and_annotate(
                 video, output_path=output_path, **options
             )
-        except BackendUnavailableError:
+        except Sphalma:
             raise
         except Exception as exc:
             raise AdapterError(
@@ -131,7 +178,7 @@ class UltralyticsAdapter(Mechane):
         self,
         video: Kinesis,
         *,
-        output_path: object,
+        output_path: Any,
         show_labels: bool = True,
         show_confidence: bool = True,
         box_color: tuple[int, int, int] | None = None,
@@ -139,7 +186,7 @@ class UltralyticsAdapter(Mechane):
         line_width: int = 3,
         font_size: int = 16,
         estimate_demographics: bool = False,
-        **options: object,
+        **options: Any,
     ) -> tuple[VideoDetectionResult, Any]:
         """Single decode pass: run inference and draw+write, reusing the
         same frame Ultralytics already decoded internally (`raw.orig_img`)
@@ -160,7 +207,7 @@ class UltralyticsAdapter(Mechane):
         if self._detect_model is None:
             self._detect_model = YOLO(self._detect_model_path)
 
-        sample_every_n_frames = int(options.pop("sample_every_n_frames", 1))  # type: ignore[arg-type]
+        sample_every_n_frames = int(options.pop("sample_every_n_frames", 1))
         source, temp_file = self._video_source_for(video)
 
         probe = cv2.VideoCapture(source)
@@ -236,15 +283,8 @@ class UltralyticsAdapter(Mechane):
         return result, out_path
 
     def _source_for(self, image: Physis) -> Any:
-        if image.path is not None:
-            return str(image.path)
-        if image.data is not None:
-            import io
-
-            from PIL import Image as PILImage
-
-            return PILImage.open(io.BytesIO(image.data)).convert("RGB")
-        raise AdapterError("Physis has neither `path` nor `data` set")
+        """Upright, validated RGB pixels (shared loader), as a PIL image."""
+        return load_rgb(image)
 
     def _video_source_for(self, video: Kinesis) -> tuple[Any, str | None]:
         """Return (source_for_ultralytics, temp_file_path_to_clean_up_or_None).
@@ -268,7 +308,7 @@ class UltralyticsAdapter(Mechane):
         raise AdapterError("Kinesis has neither `path`, `url`, nor `data` set")
 
     def _infer_detect(
-        self, image: Physis, *, estimate_demographics: bool = False, **options: object
+        self, image: Physis, *, estimate_demographics: bool = False, **options: Any
     ) -> DetectionResult:
         YOLO = self._load_ultralytics()
         if self._detect_model is None:
@@ -342,7 +382,70 @@ class UltralyticsAdapter(Mechane):
             gender_confidence=gender_confidence,
         )
 
-    def _infer_classify(self, image: Physis, **options: object) -> ClassificationResult:
+    @staticmethod
+    def _raw_boxes(raw: Any) -> list[tuple[str, float, list[float]]]:
+        """``(label, confidence, xyxy)`` for each box in an Ultralytics result."""
+        names = raw.names
+        out: list[tuple[str, float, list[float]]] = []
+        for box in raw.boxes:
+            cls_id = int(box.cls[0])
+            label = names.get(cls_id, str(cls_id)) if isinstance(names, dict) else str(cls_id)
+            out.append((label, float(box.conf[0]), box.xyxy[0].tolist()))
+        return out
+
+    def _infer_segment(self, image: Physis, **options: Any) -> SegmentationResult:
+        YOLO = self._load_ultralytics()
+        if self._segment_model is None:
+            self._segment_model = YOLO(self._segment_model_path)
+        raw = self._segment_model(self._source_for(image), verbose=False, **options)[0]
+        polygons = (
+            []
+            if raw.masks is None
+            else [[(float(x), float(y)) for x, y in np.asarray(p)] for p in raw.masks.xy]
+        )
+        segments = [
+            Segment(
+                label=label,
+                confidence=Doxa(value=conf),
+                box=BoundingBox(x_min=xy[0], y_min=xy[1], x_max=xy[2], y_max=xy[3]),
+                polygon=polygon,
+            )
+            for (label, conf, xy), polygon in zip(self._raw_boxes(raw), polygons, strict=False)
+        ]
+        return SegmentationResult(backend=self.name, latency_ms=0.0, segments=segments)
+
+    def _infer_pose(self, image: Physis, **options: Any) -> PoseResult:
+        YOLO = self._load_ultralytics()
+        if self._pose_model is None:
+            self._pose_model = YOLO(self._pose_model_path)
+        raw = self._pose_model(self._source_for(image), verbose=False, **options)[0]
+        kp = raw.keypoints
+        points = np.asarray(kp.xy) if kp is not None else np.zeros((0, 0, 2))
+        scores = np.asarray(kp.conf) if kp is not None and kp.conf is not None else None
+        poses: list[Pose] = []
+        for i, (label, conf, xy) in enumerate(self._raw_boxes(raw)):
+            person = points[i] if i < len(points) else []
+            names = COCO_KEYPOINTS if len(person) == len(COCO_KEYPOINTS) else None
+            keypoints = [
+                Keypoint(
+                    name=names[k] if names else f"kp{k}",
+                    x=float(x),
+                    y=float(y),
+                    confidence=Doxa(value=float(scores[i][k]) if scores is not None else 1.0),
+                )
+                for k, (x, y) in enumerate(person)
+            ]
+            poses.append(
+                Pose(
+                    label=label,
+                    confidence=Doxa(value=conf),
+                    box=BoundingBox(x_min=xy[0], y_min=xy[1], x_max=xy[2], y_max=xy[3]),
+                    keypoints=keypoints,
+                )
+            )
+        return PoseResult(backend=self.name, latency_ms=0.0, poses=poses)
+
+    def _infer_classify(self, image: Physis, **options: Any) -> ClassificationResult:
         YOLO = self._load_ultralytics()
         if self._classify_model is None:
             self._classify_model = YOLO(self._classify_model_path)
@@ -360,7 +463,7 @@ class UltralyticsAdapter(Mechane):
         return ClassificationResult(backend=self.name, latency_ms=0.0, entries=entries)
 
     def _infer_detect_video(
-        self, video: Kinesis, *, estimate_demographics: bool = False, **options: object
+        self, video: Kinesis, *, estimate_demographics: bool = False, **options: Any
     ) -> VideoDetectionResult:
         import os
 
@@ -368,7 +471,7 @@ class UltralyticsAdapter(Mechane):
         if self._detect_model is None:
             self._detect_model = YOLO(self._detect_model_path)
 
-        sample_every_n_frames = int(options.pop("sample_every_n_frames", 1))  # type: ignore[arg-type]
+        sample_every_n_frames = int(options.pop("sample_every_n_frames", 1))
         source, temp_file = self._video_source_for(video)
 
         frames: list[FrameDetections] = []
@@ -409,31 +512,4 @@ class UltralyticsAdapter(Mechane):
             frames=frames,
             frame_count=len(frames),
             fps=video.fps,
-        )
-
-    def _load_deepface(self):
-        try:
-            from deepface import DeepFace
-        except ImportError as exc:
-            raise BackendUnavailableError(
-                "The 'deepface' package is required for demographic estimation. "
-                "Install it with: pip install 'horasis[demographics]'"
-            ) from exc
-        return DeepFace
-
-    def _estimate_face(self, crop_bgr) -> FaceEstimate | None:
-        DeepFace = self._load_deepface()
-        try:
-            analysis = DeepFace.analyze(
-                crop_bgr, actions=["age", "gender"], enforce_detection=False, silent=True
-            )[0]
-        except (ValueError, RuntimeError, TypeError, KeyError, OSError):
-            return None
-        gender_scores = analysis.get("gender", {})
-        top_gender = max(gender_scores, key=gender_scores.get) if gender_scores else None
-        top_conf = gender_scores.get(top_gender, 0.0) / 100.0 if top_gender else None
-        return FaceEstimate(
-            estimated_age=analysis.get("age"),
-            estimated_gender=top_gender,
-            gender_confidence=Doxa(value=top_conf) if top_conf is not None else None,
         )
