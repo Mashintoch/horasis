@@ -412,7 +412,7 @@ Known limits:
 - Ultralytics, Tesseract, EasyOCR, YuNet, the moderation model and onnxruntime have only been exercised through test doubles, never against the real engines or weights. Smoke-test each one you depend on.
 - The YuNet model file isn't downloaded for you.
 - `HashedApiKeyValidator` keeps its records in memory. Persist them with `export_records()`.
-- Image URL fetching has no SSRF protection of its own. It's off unless you enable it.
+- Image URL fetching is off by default. When enabled it is SSRF-hardened: http(s) only, every resolved address must be globally routable, the connection is pinned to the validated IP (no DNS rebinding), redirects are followed manually (max 3, re-validated), bodies are streamed with a size cap and must be `image/*`. `InputPolicy.url_allow_hosts` / `url_deny_hosts` add a hostname policy. Video URLs (`Kinesis.from_url`, `stream`) use a simpler fetch without these checks, so keep them for trusted callers.
 - There's no admin API for keys, no object tracking, no result caching and no Docker image yet. See [docs/guide.md](docs/guide.md) for the roadmap.
 
 ## License

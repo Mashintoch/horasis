@@ -81,7 +81,10 @@ class InputPolicy(BaseModel):
         max_pixels: Largest accepted decoded image (width * height); guards
             against decompression bombs.
         allowed_formats: Pillow format names that may be decoded.
-        url_timeout_seconds: Network timeout used when fetching a URL.
+        url_timeout_seconds: Connect and per-read timeout used when fetching a URL.
+        url_allow_hosts: If non-empty, only these hostnames may be fetched.
+            Resolved addresses must still be public.
+        url_deny_hosts: Hostnames never fetched (wins over the allow list).
         apply_exif_orientation: Rotate/flip pixels per the EXIF orientation tag.
     """
 
@@ -94,6 +97,8 @@ class InputPolicy(BaseModel):
         default_factory=lambda: ["JPEG", "PNG", "WEBP", "BMP", "TIFF", "GIF"]
     )
     url_timeout_seconds: float = Field(default=10.0, gt=0)
+    url_allow_hosts: list[str] = Field(default_factory=list)
+    url_deny_hosts: list[str] = Field(default_factory=list)
     apply_exif_orientation: bool = True
 
 

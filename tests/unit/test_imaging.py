@@ -130,7 +130,7 @@ def test_exif_orientation_can_be_disabled() -> None:
 def test_urls_are_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
-    def fake_fetch(url: str, *, timeout: float, max_bytes: int) -> bytes:
+    def fake_fetch(url: str, *, timeout: float, max_bytes: int, policy: object) -> bytes:
         calls.append(url)
         return png_bytes()
 
