@@ -82,7 +82,7 @@ strict = true
 packages = ["horasis"]
 
 [[tool.mypy.overrides]]
-module = ["deepface", "deepface.*", "imageio_ffmpeg", "easyocr", "pytesseract", "onnxruntime", "cv2", "transformers", "redis", "opentelemetry", "opentelemetry.*"]
+module = ["deepface", "deepface.*", "imageio_ffmpeg", "easyocr", "pytesseract", "onnxruntime", "cv2", "transformers", "redis", "opentelemetry", "opentelemetry.*", "imageio", "imageio.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
