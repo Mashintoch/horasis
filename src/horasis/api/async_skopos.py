@@ -14,7 +14,9 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Self, TypeVar
+from typing import Any, TypeVar
+
+from typing_extensions import Self
 
 from horasis.access.metron import UsageReport
 from horasis.api.skopos import Skopos, _describe

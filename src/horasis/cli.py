@@ -203,12 +203,6 @@ def _cmd_backends(args: argparse.Namespace, out: Callable[[str], None]) -> int:
 
 
 def _cmd_serve(args: argparse.Namespace, out: Callable[[str], None]) -> int:
-    try:
-        import uvicorn
-
-        from horasis.server import create_app
-    except ImportError:
-        raise Sphalma("`horasis serve` needs: pip install 'horasis[server]'") from None
     kanon = Kanon.from_yaml(args.config) if args.config else Kanon.default()
     validator = InMemoryApiKeyValidator()
     if args.keys_file:
@@ -223,6 +217,12 @@ def _cmd_serve(args: argparse.Namespace, out: Callable[[str], None]) -> int:
         validator.register_simple(env_key, principal_id="env", tier=Klimax.ENTERPRISE)
     else:
         raise Sphalma("No API keys configured: pass --keys-file or set HORASIS_API_KEY")
+    try:
+        import uvicorn
+
+        from horasis.server import create_app
+    except ImportError:
+        raise Sphalma("`horasis serve` needs: pip install 'horasis[server]'") from None
     client = Skopos.build(
         kanon=kanon.model_copy(update={"device": args.device}),
         validator=validator,

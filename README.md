@@ -4,7 +4,8 @@ A layered, plugin-friendly computer vision SDK with API-key based, tiered,
 quota-aware access control.
 
 `horasis` (Greek "vision, seeing") wraps object detection, image
-classification, OCR, face detection, and content moderation behind one
+classification, OCR, face detection, content moderation, segmentation and
+pose estimation behind one
 small, stable public API — while keeping backend, orchestration, and
 access-control concerns cleanly separated so the SDK can grow new
 backends and capabilities without breaking callers.
@@ -15,11 +16,11 @@ Five layers, each depending only on the ones below it:
 
 | Layer | Name | Responsibility |
 |---|---|---|
-| 5 | Public API | `Skopos` client + capability classes (`ObjectDetector`, `ImageClassifier`, `TextExtractor`, `FaceDetector`, `ContentModerator`) |
+| 5 | Public API | `Skopos` client + capability classes (`ObjectDetector`, `ImageClassifier`, `TextExtractor`, `FaceDetector`, `ContentModerator`, `ObjectSegmenter`, `PoseEstimator`; `AsyncSkopos`) |
 | 4 | Access control | `Klimax` tiers, `Prosopon` identity, `Nomos` policy, `Metron` quotas, `@limen` decorator |
-| 3 | Orchestration | `Organon` pipeline, `Kairos` hooks |
+| 3 | Orchestration | `Organon` pipeline, `Kairos` hooks (+ `LoggingHook`, `TimingHook`) |
 | 2 | Backend abstraction | `Mechane` interface, `Taxis` registry, adapters (Ultralytics, ONNX Runtime, EasyOCR, Tesseract, YuNet faces, transformers moderation, remote HTTP) |
-| 1 | Foundation | `Kanon` config, `Sphalma` exceptions, result schemas (`Theoria`, `Doxa`, `Praxis`, `Glyph`, `Physis`), `Aisthesis` telemetry |
+| 1 | Foundation | `Kanon` config, `Sphalma` exceptions, result schemas (`Theoria`, `Doxa`, `Praxis`, `Glyph`, `Physis`), `Aisthesis` telemetry (+ OpenTelemetry) |
 
 Plugins (`Prosthesis`) register additional `Mechane` backends via the
 `horasis.backends` Python entry-point group, independent of the core layers.
@@ -33,6 +34,10 @@ pip install horasis[face]          # OpenCV (YuNet face detection)
 pip install horasis[moderation]    # transformers image classifier
 pip install horasis[onnx]          # onnxruntime
 pip install horasis[remote]        # httpx client for a remote horasis server
+pip install horasis[redis]         # Redis-backed quota store
+pip install horasis[video]         # OpenCV, for detection.stream()
+pip install horasis[otel]          # OpenTelemetry spans and metrics
+pip install horasis[server]        # FastAPI server (`horasis serve`)
 pip install horasis[all]
 ```
 
@@ -170,6 +175,25 @@ hook is logged and swallowed.
 `horasis.errors` and `horasis.latency_ms`; pass it as `Skopos.build(aisthesis=...)`. It is a
 no-op if OpenTelemetry is not installed.
 
+## Command line and HTTP server
+
+```bash
+horasis detect photo.jpg --json
+horasis ocr scan.png --backend tesseract
+horasis faces group.jpg --face-model yunet.onnx --draw faces.png
+horasis classify|moderate|segment|pose IMAGE   # same flags: --backend --json --min-conf --draw --device
+horasis backends                                # built-in and plugin backends (and plugins that failed to load)
+
+HORASIS_API_KEY=change-me horasis serve --port 8000     # needs horasis[server]
+curl -H "X-API-Key: change-me" -F image=@photo.jpg -F options='{"conf": 0.4}' localhost:8000/v1/detect
+```
+
+The server exposes `POST /v1/{praxis}` (`detect classify ocr face moderate segment pose`),
+`GET /health` and `GET /usage`, authenticated with an `X-API-Key` header. Errors are
+`{"error": {"type", "message", ...}}` with 401/403/404/413/422/429/501/500, and 429s carry
+`Retry-After`. Options are whitelisted per praxis. `RemoteAdapter` is the matching client, so
+one horasis can use another as a backend. Examples for every capability are in `examples/`.
+
 ## Configuration
 
 Tiers and quotas live in a `Kanon`, loadable from YAML:
@@ -184,6 +208,8 @@ client = Skopos.build(kanon=kanon)
 See `src/horasis/config/default.yaml` for the shipped defaults.
 
 ## Writing a backend plugin
+
+See [docs/plugins.md](docs/plugins.md) for the full guide.
 
 ```toml
 # your package's pyproject.toml
@@ -213,23 +239,29 @@ Prosthesis().discover(client.taxis)
 ## Development
 
 ```bash
-pip install -e ".[dev]"
-pytest
+pip install -e ".[dev,server]"
+pytest                     # offline
 ruff check src tests
 mypy
 ```
 
 ## Status
 
-Version 1.0.0. Implemented and unit-tested with fake backends (no model
-downloads or network in the test suite): detection, classification, OCR, face
-detection, content moderation, ONNX and remote adapters, input validation,
-config-driven backend routing. Real-model tests are marked `integration` and
-skipped by default (`pytest -m integration`).
+Version 1.1.0 (see [CHANGELOG.md](CHANGELOG.md)); supports Python 3.10-3.12. Everything above
+is implemented and covered by offline tests that use fake backends -- the suite never
+downloads a model or touches the network. The `integration` pytest marker is reserved for
+real-model tests (skipped unless you pass `-m integration`); none ship yet.
 
-Not yet done: shared (cross-process) rate limits, async API, batching, streaming, a CLI and an HTTP
-server (the remote adapter speaks the protocol documented in
-`horasis/backend/remote_adapter.py`; no server ships yet).
+Known limits:
+
+- Rate limits (token buckets) are per process; quotas are shared via the SQLite/Redis stores.
+- `max_loaded_models` evicts whole backends, not individual models.
+- Ultralytics, Tesseract, EasyOCR, YuNet, the moderation model and onnxruntime were exercised
+  only through test doubles, never against the real engines or weights. Smoke-test each one
+  you depend on.
+- The YuNet model file is not downloaded for you.
+- `HashedApiKeyValidator` keeps its records in memory; persist them with `export_records()`.
+- Image URL fetching has no SSRF protection of its own (it is off unless you enable it).
 
 ## License
 

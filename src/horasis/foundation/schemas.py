@@ -8,10 +8,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, ClassVar, Generic, Literal, Self, TypeVar
+from typing import Any, ClassVar, Generic, Literal, TypeVar
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing_extensions import Self
 
 from horasis.foundation.sphalma import Sphalma, ValidationError
 
