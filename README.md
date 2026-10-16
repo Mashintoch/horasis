@@ -189,8 +189,14 @@ validator.revoke(key)
   (by default, 2 for OCR and moderation and 1 for everything else). Counters are
   atomic in every store.
 - **Rate limits:** there are per-minute token buckets per tier (`TierRule.rate`)
-  and per praxis (`praxis_rates`). They live in-process, so each worker enforces
-  its own bucket. You can add windowed quotas per praxis with `praxis_quotas`.
+  and per praxis (`praxis_rates`). By default they live in-process, so each
+  worker enforces its own bucket. To share them across workers, use the Redis
+  limiter (atomic Lua script on Redis server time, keyed per principal + scope):
+  `store, limiter = redis_backends(url=...)` then
+  `Skopos.build(quota_store=store, rate_limiter=limiter)`, or set
+  `Kanon.rate_limit_store: redis` with `redis_url`. `horasis serve --workers N`
+  warns when the limiter is in-process; `--redis-url` shares quotas and limits.
+  You can add windowed quotas per praxis with `praxis_quotas`.
 - **Errors:** `QuotaExceededError` and `RateLimitedError` carry `limit`, `scope`
   and `retry_after` (seconds). Denied calls are refunded.
 - **Scopes** narrow what a key may call within its tier.
@@ -407,7 +413,7 @@ unless you pass `-m integration`. None ship yet.
 
 Known limits:
 
-- Rate limits (token buckets) are per process. Quotas are shared via the SQLite and Redis stores.
+- Rate limits (token buckets) are per process unless you use `RedisRateLimiter`. Quotas are shared via the SQLite and Redis stores.
 - `max_loaded_models` evicts whole backends, not individual models.
 - Ultralytics, Tesseract, EasyOCR, YuNet, the moderation model and onnxruntime have only been exercised through test doubles, never against the real engines or weights. Smoke-test each one you depend on.
 - The YuNet model file isn't downloaded for you.

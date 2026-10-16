@@ -25,7 +25,7 @@ from horasis.access.keys import ApiKeyValidator
 from horasis.access.metron import Metron, UsageReport
 from horasis.access.nomos import Nomos
 from horasis.access.prosopon import Prosopon
-from horasis.access.ratelimit import TokenBucketLimiter
+from horasis.access.ratelimit import RateLimiter, TokenBucketLimiter
 from horasis.foundation.aisthesis import Aisthesis, NullAisthesis
 from horasis.foundation.imaging import to_physis
 from horasis.foundation.kanon import Kanon, QuotaRule
@@ -47,7 +47,7 @@ class AccessContext:
     validator: ApiKeyValidator
     nomos: Nomos
     metron: Metron
-    rate_limiter: TokenBucketLimiter
+    rate_limiter: RateLimiter
     aisthesis: Aisthesis = field(default_factory=NullAisthesis)
 
     @classmethod
@@ -57,7 +57,7 @@ class AccessContext:
         kanon: Kanon,
         validator: ApiKeyValidator,
         metron: Metron | None = None,
-        rate_limiter: TokenBucketLimiter | None = None,
+        rate_limiter: RateLimiter | None = None,
         aisthesis: Aisthesis | None = None,
     ) -> AccessContext:
         return cls(

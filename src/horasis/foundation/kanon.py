@@ -128,6 +128,10 @@ class Kanon(BaseModel):
         praxis_cost: Units of quota/rate each praxis consumes per call.
         moderation_safe_categories: Categories that describe benign content
             (e.g. ``"normal"``); never flagged regardless of score.
+        rate_limit_store: Where per-minute token buckets live: ``memory`` (per
+            process) or ``redis`` (shared by all workers; needs `redis_url`).
+        redis_url: Redis URL used when `rate_limit_store` is ``redis`` and
+            `Skopos.build` is not given a limiter/quota store to reuse.
         extra: Free-form namespace for plugin-specific settings.
     """
 
@@ -147,6 +151,8 @@ class Kanon(BaseModel):
     moderation_safe_categories: list[str] = Field(
         default_factory=lambda: ["normal", "safe", "sfw", "neutral", "drawings"]
     )
+    rate_limit_store: Literal["memory", "redis"] = "memory"
+    redis_url: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod

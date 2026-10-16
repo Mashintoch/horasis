@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from horasis.access.metron import window_start
+from horasis.access.ratelimit import RedisRateLimiter
 from horasis.foundation.sphalma import BackendUnavailableError
 
 
@@ -102,6 +103,11 @@ class RedisQuotaStore:
         self._client = client
         self._prefix = prefix
 
+    @property
+    def client(self) -> Any:
+        """The Redis client, so a :class:`RedisRateLimiter` can share it."""
+        return self._client
+
     def _key(self, key: str, window_seconds: int) -> str:
         return f"{self._prefix}{key}:{window_start(window_seconds)}"
 
@@ -119,3 +125,15 @@ class RedisQuotaStore:
     def current(self, key: str, *, window_seconds: int) -> int:
         raw = self._client.get(self._key(key, window_seconds))
         return max(0, int(raw)) if raw is not None else 0
+
+
+def redis_backends(
+    client: Any = None, *, url: str = "redis://localhost:6379/0"
+) -> tuple[RedisQuotaStore, RedisRateLimiter]:
+    """A quota store and a rate limiter sharing one Redis client (and connection pool).
+
+    Usage: ``store, limiter = redis_backends(url=...)`` then
+    ``Skopos.build(quota_store=store, rate_limiter=limiter)``.
+    """
+    store = RedisQuotaStore(client, url=url)
+    return store, RedisRateLimiter(store.client)
