@@ -17,6 +17,7 @@ Quick start:
 from horasis.access.keys import ApiKeyValidator, HashedApiKeyValidator, InMemoryApiKeyValidator
 from horasis.access.klimax import Klimax
 from horasis.access.metron import UsageReport
+from horasis.api.async_skopos import AsyncSkopos
 from horasis.api.skopos import (
     ContentModerator,
     FaceDetector,
@@ -27,6 +28,7 @@ from horasis.api.skopos import (
 )
 from horasis.foundation.kanon import InputPolicy, Kanon
 from horasis.foundation.schemas import (
+    BatchItem,
     ClassificationResult,
     DetectionResult,
     Face,
@@ -62,7 +64,9 @@ __all__ = [
     "AccessDeniedError",
     "AdapterError",
     "ApiKeyValidator",
+    "AsyncSkopos",
     "BackendUnavailableError",
+    "BatchItem",
     "ClassificationResult",
     "ConfigurationError",
     "ContentModerator",

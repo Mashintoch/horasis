@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+import logging
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
+from typing import Any
 
 from horasis.access.keys import ApiKeyValidator, InMemoryApiKeyValidator
 from horasis.access.limen import AccessContext, limen
@@ -12,20 +14,31 @@ from horasis.backend.mechane import Mechane
 from horasis.backend.taxis import Taxis
 from horasis.backend.ultralytics_adapter import UltralyticsAdapter
 from horasis.foundation.aisthesis import Aisthesis
+from horasis.foundation.frames import iter_frames
 from horasis.foundation.imaging import ImageInput, to_physis
 from horasis.foundation.kanon import Kanon
 from horasis.foundation.schemas import (
+    BatchItem,
     ClassificationResult,
     DetectionResult,
     FaceResult,
+    FrameResult,
     Kinesis,
     ModerationResult,
     OcrResult,
     Praxis,
     VideoDetectionResult,
 )
-from horasis.foundation.sphalma import ValidationError
+from horasis.foundation.sphalma import (
+    BackendUnavailableError,
+    InvalidApiKeyError,
+    Sphalma,
+    ValidationError,
+)
+from horasis.orchestration.kairos import Kairos
 from horasis.orchestration.organon import Organon
+
+logger = logging.getLogger(__name__)
 
 
 def _to_kinesis(video: str | Path | bytes | Kinesis) -> Kinesis:
@@ -41,12 +54,46 @@ def _to_kinesis(video: str | Path | bytes | Kinesis) -> Kinesis:
     raise ValidationError(f"Unsupported video input type: {type(video).__name__}")
 
 
+def _describe(image: object) -> str:
+    """Short, safe label for an input (never the pixel data)."""
+    if isinstance(image, str | Path):
+        return str(image)
+    return getattr(image, "source", None) or f"<{type(image).__name__}>"
+
+
 class _Capability:
     """Shared base for the small, single-purpose public-API classes."""
 
     def __init__(self, *, access: AccessContext, organon: Organon) -> None:
         self._access = access
         self._organon = organon
+
+    def _run_batch(
+        self,
+        fn: Callable[..., Any],
+        images: Sequence[ImageInput],
+        api_key: str,
+        **kwargs: Any,
+    ) -> list[BatchItem[Any]]:
+        """Run `fn` over `images`; each item succeeds or fails on its own.
+
+        Every item goes through the full access path, so quota and rate
+        limits are charged per item -- including items that then fail input
+        validation, since the charge precedes the work. An invalid API key aborts the whole
+        batch (it would fail identically for every item); anything else
+        that is a `Sphalma` is recorded on that item and the batch goes on.
+        """
+        items: list[BatchItem[Any]] = []
+        for index, image in enumerate(images):
+            try:
+                items.append(
+                    BatchItem(index, _describe(image), result=fn(image, api_key=api_key, **kwargs))
+                )
+            except InvalidApiKeyError:
+                raise
+            except Sphalma as exc:
+                items.append(BatchItem(index, _describe(image), error=exc))
+        return items
 
 
 class ObjectDetector(_Capability):
@@ -361,6 +408,66 @@ class ObjectDetector(_Capability):
         assert isinstance(result, VideoDetectionResult)
         return result, Path(str(out_path))
 
+    def detect_batch(
+        self,
+        images: Sequence[ImageInput],
+        *,
+        api_key: str,
+        backend: str | None = None,
+        estimate_demographics: bool = False,
+    ) -> list[BatchItem[DetectionResult]]:
+        """Detect objects in each of `images`, with a result or error per item.
+
+        Quota (and rate limits) are charged per item. Results come back in
+        input order; failed items have ``item.error`` set instead of raising.
+        """
+        return self._run_batch(
+            self.detect,
+            images,
+            api_key,
+            backend=backend,
+            estimate_demographics=estimate_demographics,
+        )
+
+    def stream(
+        self,
+        source: str | Path | int,
+        *,
+        api_key: str,
+        every_n_frames: int = 1,
+        max_frames: int | None = None,
+        backend: str | None = None,
+    ) -> Iterator[FrameResult]:
+        """Detect objects frame by frame in a video file or a webcam.
+
+        Args:
+            source: Video file path, or an ``int`` camera index. ``http(s)``
+                URLs need ``Kanon.inputs.allow_urls``.
+            api_key: Caller's API key. **Each processed frame is charged as one
+                detection call**, so a quota or rate error ends the stream.
+            every_n_frames: Process one frame out of every N (1 = all).
+            max_frames: Stop after this many processed frames (a webcam never
+                ends by itself; you can also just stop iterating).
+            backend: Optional explicit backend name.
+
+        Yields:
+            A :class:`FrameResult` per processed frame. Requires the optional
+            ``video`` extra (``pip install 'horasis[video]'``).
+        """
+        is_url = isinstance(source, str) and source.startswith(("http://", "https://"))
+        if is_url and not self._access.kanon.inputs.allow_urls:
+            raise ValidationError(
+                "URL video sources are disabled; set Kanon.inputs.allow_urls=True to opt in"
+            )
+        policy = self._access.kanon.inputs
+        for index, stamp, rgb in iter_frames(
+            source, every_n_frames=every_n_frames, max_frames=max_frames
+        ):
+            result = self.detect(  # type: ignore[call-arg]
+                to_physis(rgb, policy), api_key=api_key, backend=backend
+            )
+            yield FrameResult(frame_index=index, timestamp_s=stamp, result=result)
+
 
 class ImageClassifier(_Capability):
     """Public API for whole-image classification."""
@@ -377,6 +484,12 @@ class ImageClassifier(_Capability):
         result = self._organon.run(Praxis.CLASSIFY, to_physis(image, self._access.kanon.inputs), backend=backend)
         assert isinstance(result, ClassificationResult)
         return result
+
+    def classify_batch(
+        self, images: Sequence[ImageInput], *, api_key: str, backend: str | None = None
+    ) -> list[BatchItem[ClassificationResult]]:
+        """Classify each of `images`; a result or error per item, quota charged per item."""
+        return self._run_batch(self.classify, images, api_key, backend=backend)
 
 
 class TextExtractor(_Capability):
@@ -395,6 +508,12 @@ class TextExtractor(_Capability):
         assert isinstance(result, OcrResult)
         return result
 
+    def extract_text_batch(
+        self, images: Sequence[ImageInput], *, api_key: str, backend: str | None = None
+    ) -> list[BatchItem[OcrResult]]:
+        """OCR each of `images`; a result or error per item, quota charged per item."""
+        return self._run_batch(self.extract_text, images, api_key, backend=backend)
+
 
 class FaceDetector(_Capability):
     """Public API for face detection."""
@@ -412,6 +531,12 @@ class FaceDetector(_Capability):
         assert isinstance(result, FaceResult)
         return result
 
+    def detect_faces_batch(
+        self, images: Sequence[ImageInput], *, api_key: str, backend: str | None = None
+    ) -> list[BatchItem[FaceResult]]:
+        """Detect faces in each of `images`; a result or error per item, charged per item."""
+        return self._run_batch(self.detect_faces, images, api_key, backend=backend)
+
 
 class ContentModerator(_Capability):
     """Public API for content moderation."""
@@ -428,6 +553,12 @@ class ContentModerator(_Capability):
         result = self._organon.run(Praxis.MODERATE, to_physis(image, self._access.kanon.inputs), backend=backend)
         assert isinstance(result, ModerationResult)
         return result
+
+    def moderate_batch(
+        self, images: Sequence[ImageInput], *, api_key: str, backend: str | None = None
+    ) -> list[BatchItem[ModerationResult]]:
+        """Moderate each of `images`; a result or error per item, charged per item."""
+        return self._run_batch(self.moderate, images, api_key, backend=backend)
 
 
 class Skopos:
@@ -456,6 +587,7 @@ class Skopos:
         aisthesis: Aisthesis | None = None,
         metron: Metron | None = None,
         rate_limiter: TokenBucketLimiter | None = None,
+        kairos: Kairos | None = None,
     ) -> None:
         self._kanon = kanon
         self._taxis = taxis
@@ -468,13 +600,45 @@ class Skopos:
             rate_limiter=rate_limiter,
         )
         self._access = access
-        organon = Organon(kanon=kanon, taxis=taxis)
+        taxis.configure(device=kanon.device, max_loaded=kanon.max_loaded_models)
+        self._kairos = kairos or Kairos()
+        organon = Organon(kanon=kanon, taxis=taxis, kairos=self._kairos)
 
         self.detection = ObjectDetector(access=access, organon=organon)
         self.classification = ImageClassifier(access=access, organon=organon)
         self.ocr = TextExtractor(access=access, organon=organon)
         self.face = FaceDetector(access=access, organon=organon)
         self.moderation = ContentModerator(access=access, organon=organon)
+
+    @property
+    def kairos(self) -> Kairos:
+        """Pipeline hooks; attach logging/timing or your own (see `horasis.orchestration`)."""
+        return self._kairos
+
+    def warmup(self, backends: Sequence[str] | None = None) -> list[str]:
+        """Load models now instead of on the first request.
+
+        Args:
+            backends: Names to warm. If omitted, every registered backend is
+                tried and those whose dependencies/models are missing are skipped
+                (logged); if you name a backend, its failure is raised.
+
+        Returns:
+            Names of the backends that were warmed.
+        """
+        warmed: list[str] = []
+        for name in backends if backends is not None else self._taxis.names():
+            backend = self._taxis.get(name)
+            try:
+                backend.warm_up()
+            except BackendUnavailableError:
+                if backends is not None:
+                    raise
+                logger.info("warmup: skipped unavailable backend %r", name)
+                continue
+            self._taxis.touch(backend)
+            warmed.append(name)
+        return warmed
 
     def usage(self, api_key: str) -> UsageReport:
         """Report what `api_key` has used and has left (consumes nothing).
@@ -502,6 +666,7 @@ class Skopos:
         aisthesis: Aisthesis | None = None,
         backends: Sequence[Mechane] = (),
         quota_store: QuotaStore | None = None,
+        kairos: Kairos | None = None,
     ) -> Skopos:
         """Convenience constructor wiring up the default Ultralytics backend.
 
@@ -530,4 +695,5 @@ class Skopos:
             validator=validator,
             aisthesis=aisthesis,
             metron=Metron(quota_store) if quota_store else None,
+            kairos=kairos,
         )

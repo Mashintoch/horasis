@@ -59,6 +59,7 @@ class YuNetFaceAdapter(Mechane):
         self._top_k = top_k
         self._landmarks = landmarks
         self._detector: Any = detector
+        self._injected: Any = detector
 
     def _load_detector(self) -> Any:
         if self._detector is not None:
@@ -81,6 +82,12 @@ class YuNetFaceAdapter(Mechane):
             str(path), "", (320, 320), self._score_threshold, self._nms_threshold, self._top_k
         )
         return self._detector
+
+    def is_loaded(self) -> bool:
+        return self._detector is not None and self._detector is not self._injected
+
+    def unload(self) -> None:
+        self._detector = self._injected
 
     def warm_up(self) -> None:
         self._load_detector()

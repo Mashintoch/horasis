@@ -1,13 +1,39 @@
-"""Kairos -- the pipeline hook system."""
+"""Kairos -- the pipeline hook system.
+
+Hooks let you observe a request as it moves through the pipeline, without
+changing it. Register a callable for a :class:`Moment` and it is called with
+keyword arguments describing that moment:
+
+==================  ==============================================================
+Moment              Keyword arguments
+==================  ==============================================================
+``BEFORE_RESOLVE``  ``praxis``, and ``image`` or ``video``
+``AFTER_RESOLVE``   ``praxis``, ``backend`` (the chosen :class:`Mechane`)
+``BEFORE_INFER``    ``praxis``, ``backend``, and ``image`` or ``video``
+``AFTER_INFER``     ``praxis``, ``backend``, ``result``
+``ON_ERROR``        ``praxis``, ``error`` (and nothing else is guaranteed)
+==================  ==============================================================
+
+Write hooks as ``def hook(**payload): ...`` (or name the arguments you want
+and add ``**_``) so they keep working when payloads grow.
+
+Failure semantics: an exception raised by a *before/after* hook propagates to
+the caller of the request (and then fires ``ON_ERROR``). An exception raised
+by an ``ON_ERROR`` hook is logged and swallowed, so it can never hide the real
+error. Built-in hooks live in :mod:`horasis.orchestration.hooks`.
+"""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from enum import Enum
 from typing import Any
 
 from horasis.backend.mechane import Mechane
 from horasis.foundation.schemas import Physis, Praxis, Theoria
+
+logger = logging.getLogger(__name__)
 
 
 class Moment(str, Enum):
@@ -17,6 +43,7 @@ class Moment(str, Enum):
     AFTER_RESOLVE = "after_resolve"
     BEFORE_INFER = "before_infer"
     AFTER_INFER = "after_infer"
+    ON_ERROR = "on_error"
 
 
 HookFn = Callable[..., None]
@@ -26,8 +53,7 @@ class Kairos:
     """Registers and fires hooks at named :class:`Moment`s.
 
     Hooks are advisory: they cannot mutate the pipeline's outcome, only
-    observe it (e.g. for logging, metrics, or debugging). Exceptions raised
-    by a hook propagate to the caller of `Organon.run`.
+    observe it (e.g. for logging, metrics, or debugging).
     """
 
     def __init__(self) -> None:
@@ -41,9 +67,16 @@ class Kairos:
             self._hooks[moment].remove(fn)
 
     def fire(self, moment: Moment, **payload: Any) -> None:
-        for hook in self._hooks[moment]:
+        """Call every hook for `moment`; exceptions propagate (except ``ON_ERROR``)."""
+        if moment is Moment.ON_ERROR:
+            for hook in list(self._hooks[moment]):
+                try:
+                    hook(**payload)
+                except Exception:
+                    logger.exception("Kairos on_error hook %r failed", hook)
+            return
+        for hook in list(self._hooks[moment]):
             hook(**payload)
-
 
     def before_resolve(self, *, praxis: Praxis, image: Physis) -> None:
         self.fire(Moment.BEFORE_RESOLVE, praxis=praxis, image=image)
@@ -56,3 +89,6 @@ class Kairos:
 
     def after_infer(self, *, praxis: Praxis, backend: Mechane, result: Theoria) -> None:
         self.fire(Moment.AFTER_INFER, praxis=praxis, backend=backend, result=result)
+
+    def on_error(self, *, praxis: Praxis, error: BaseException) -> None:
+        self.fire(Moment.ON_ERROR, praxis=praxis, error=error)

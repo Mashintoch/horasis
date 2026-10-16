@@ -62,6 +62,18 @@ class UltralyticsAdapter(Mechane):
             ) from exc
         return YOLO
 
+    def is_loaded(self) -> bool:
+        return self._detect_model is not None or self._classify_model is not None
+
+    def unload(self) -> None:
+        self._detect_model = None
+        self._classify_model = None
+
+    def _with_device(self, options: dict[str, Any]) -> dict[str, Any]:
+        """Add Ultralytics' ``device`` option from the effective device (auto = leave to it)."""
+        device = {"cpu": "cpu", "cuda": "cuda:0", "mps": "mps"}.get(self.effective_device())
+        return options if device is None or "device" in options else {**options, "device": device}
+
     def warm_up(self) -> None:
         YOLO = self._load_ultralytics()
         if self._detect_model is None:
@@ -74,6 +86,7 @@ class UltralyticsAdapter(Mechane):
             raise BackendUnavailableError(
                 f"UltralyticsAdapter does not support praxis {praxis.value!r}"
             )
+        options = self._with_device(options)
         start = time.perf_counter()
         result: Theoria
         try:
@@ -95,6 +108,7 @@ class UltralyticsAdapter(Mechane):
             raise BackendUnavailableError(
                 f"UltralyticsAdapter does not support video for praxis {praxis.value!r}"
             )
+        options = self._with_device(options)
         start = time.perf_counter()
         try:
             result = self._infer_detect_video(video, **options)
@@ -115,6 +129,7 @@ class UltralyticsAdapter(Mechane):
                 f"UltralyticsAdapter does not support combined video "
                 f"detect-and-annotate for praxis {praxis.value!r}"
             )
+        options = self._with_device(options)
         start = time.perf_counter()
         try:
             result, out_path = self._infer_detect_video_and_annotate(

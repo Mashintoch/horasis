@@ -122,6 +122,54 @@ Resolution: explicit `backend=` -> `backend_order[praxis]` -> `default_backend` 
 | `TransformersModerationAdapter` | moderate | per-category scores; `flagged` uses `Kanon.moderation_threshold(s)` |
 | `RemoteAdapter` | all | httpx; timeouts, retried with backoff, errors mapped to `Sphalma` types |
 
+## Async, batching, streaming
+
+```python
+from horasis import AsyncSkopos
+
+async with AsyncSkopos.build(validator=validator) as client:      # blocking backends run on a thread pool
+    result = await client.detection.detect("photo.jpg", api_key=key)
+    items = await client.detection.detect_batch(paths, api_key=key)   # concurrent
+    async for frame in client.detection.stream(0, api_key=key, every_n_frames=5):  # webcam 0
+        print(frame.frame_index, len(frame.result.detections))
+```
+
+- **Batches** (`detect_batch`, `classify_batch`, `extract_text_batch`, `detect_faces_batch`,
+  `moderate_batch`) return one `BatchItem` per input: `.result` or `.error` (a `Sphalma`),
+  never both. Quota and rate limits are charged **per item** -- including items that then
+  fail validation. An invalid API key aborts the whole batch.
+- **Streams** (`client.detection.stream(source, every_n_frames=N, max_frames=...)`) yield
+  a `FrameResult` per processed frame from a video file or camera index (needs
+  `horasis[video]`). Each processed frame is charged as one detection call.
+- **Lifecycle:** models load lazily. `client.warmup()` loads them up front;
+  `Kanon(device="auto"|"cpu"|"cuda"|"mps")` picks the device for backends that can choose
+  (an adapter's own `device=` wins); `Kanon(max_loaded_models=N)` unloads the least
+  recently used backend beyond N (it reloads on next use; granularity is per backend).
+
+## Results
+
+Every result has `.to_dict()`, `.to_json()`, `.filter(min_conf=..., labels=[...])` and
+`.draw(image)` (returns an annotated PIL image; saves nothing). Detections also export COCO:
+`result.to_coco(image_id=1, file_name="a.jpg", width=W, height=H)`.
+
+## Hooks and telemetry
+
+```python
+from horasis.orchestration import LoggingHook, Moment, TimingHook
+
+LoggingHook().attach(client.kairos)
+timing = TimingHook().attach(client.kairos)      # timing.summary() -> per-praxis count/mean/max
+client.kairos.on(Moment.ON_ERROR, lambda **p: print("failed:", p["error"]))
+```
+
+Hook moments and their keyword payloads are documented in `horasis.orchestration.kairos`.
+Hooks observe only; an exception in a before/after hook propagates, one in an `ON_ERROR`
+hook is logged and swallowed.
+
+`OpenTelemetryAisthesis` (extra `horasis[otel]`) emits a span per call plus `horasis.calls`,
+`horasis.errors` and `horasis.latency_ms`; pass it as `Skopos.build(aisthesis=...)`. It is a
+no-op if OpenTelemetry is not installed.
+
 ## Configuration
 
 Tiers and quotas live in a `Kanon`, loadable from YAML:

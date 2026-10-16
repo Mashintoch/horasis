@@ -15,6 +15,11 @@ class Mechane(ABC):
     supported_video_praxeis: frozenset[Praxis] = frozenset()
     supported_video_annotate_praxeis: frozenset[Praxis] = frozenset()
 
+    #: Explicit device for this backend (``auto``/``cpu``/``cuda``/``mps``), or
+    #: ``None`` to follow ``Kanon.device`` (set via ``Taxis.configure``).
+    device: str | None = None
+    default_device: str = "auto"
+
     @abstractmethod
     def infer(self, praxis: Praxis, image: Physis, **options: object) -> Theoria:
         """Run inference and return a :class:`Theoria` subclass instance.
@@ -70,6 +75,18 @@ class Mechane(ABC):
 
     def supports_video_annotate(self, praxis: Praxis) -> bool:
         return praxis in self.supported_video_annotate_praxeis
+
+    def effective_device(self) -> str:
+        """The device to use: this backend's own setting, else the Kanon default."""
+        return self.device or self.default_device
+
+    def is_loaded(self) -> bool:
+        """Whether this backend currently holds model weights in memory."""
+        return False
+
+    def unload(self) -> None:
+        """Release loaded models; they reload lazily on next use. Default: no-op."""
+        return
 
     def warm_up(self) -> None:
         """Optional hook to preload models/weights. Default is a no-op."""

@@ -4,14 +4,16 @@ import logging
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterable
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Generic, Literal, Self, TypeVar
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from horasis.foundation.sphalma import ValidationError
+from horasis.foundation.sphalma import Sphalma, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +278,61 @@ class Theoria(BaseModel):
     latency_ms: float
     created_at: float = Field(default_factory=lambda: time.time())
 
+    # Name of the list field holding this result's items (used by `filter`).
+    _items_field: ClassVar[str | None] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """The result as plain JSON-compatible Python data."""
+        return self.model_dump(mode="json")
+
+    def to_json(self, *, indent: int | None = None) -> str:
+        """The result as a JSON string."""
+        return self.model_dump_json(indent=indent)
+
+    def filter(
+        self, *, min_conf: float | None = None, labels: Iterable[str] | None = None
+    ) -> Self:
+        """Return a copy keeping only items that match.
+
+        Args:
+            min_conf: Keep items with confidence >= this.
+            labels: Keep items whose label (class name, OCR text, or
+                moderation category) is in this collection.
+
+        Results without a list of items (none today) are returned unchanged.
+        """
+        field = self._items_field
+        if field is None:
+            return self
+        wanted = set(labels) if labels is not None else None
+        kept = [
+            item
+            for item in getattr(self, field)
+            if (min_conf is None or item.confidence.value >= min_conf)
+            and (wanted is None or _label_of(item) in wanted)
+        ]
+        return self.model_copy(update={field: kept})
+
+    def draw(self, image: Any, **options: Any) -> Any:
+        """Return a PIL image with this result drawn on `image` (nothing is saved).
+
+        Needs the optional ``viz`` extra only for video; images need Pillow,
+        which is a core dependency. Extra `options` go to the drawing code
+        (``show_labels``, ``show_confidence``, ``box_color``, ``line_width``,
+        ``font_size``, ``text_color``).
+        """
+        from horasis.viz import draw_result
+
+        return draw_result(image, self, **options)
+
+
+def _label_of(item: Any) -> str:
+    for attr in ("label", "category", "text"):
+        value = getattr(item, attr, None)
+        if isinstance(value, str):
+            return value
+    return ""
+
 
 class FaceEstimate(BaseModel):
     """Rough, model-estimated attributes for a detected face.
@@ -309,6 +366,26 @@ class DetectionResult(Theoria):
 
     praxis: Praxis = Praxis.DETECT
     detections: list[Detection] = Field(default_factory=list)
+    _items_field: ClassVar[str | None] = "detections"
+
+    def to_coco(
+        self,
+        *,
+        image_id: int = 1,
+        file_name: str | None = None,
+        width: int | None = None,
+        height: int | None = None,
+        category_ids: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        """Export as a COCO-format dict (``images``, ``annotations``, ``categories``).
+
+        Boxes become ``[x, y, width, height]``. Category ids come from
+        `category_ids` if given, otherwise 1..N over the sorted labels seen.
+        The model score is kept as an extra ``score`` field on each annotation.
+        """
+        return detections_to_coco(
+            [(image_id, file_name, width, height, self.detections)], category_ids=category_ids
+        )
 
     def annotate(
         self,
@@ -360,6 +437,42 @@ class VideoDetectionResult(Theoria):
     frame_count: int = 0
     fps: float | None = None
 
+    def filter(
+        self, *, min_conf: float | None = None, labels: Iterable[str] | None = None
+    ) -> Self:
+        """Filter the detections inside every frame (frames themselves are kept)."""
+        wanted = set(labels) if labels is not None else None
+        frames = [
+            f.model_copy(
+                update={
+                    "detections": [
+                        d
+                        for d in f.detections
+                        if (min_conf is None or d.confidence.value >= min_conf)
+                        and (wanted is None or d.label in wanted)
+                    ]
+                }
+            )
+            for f in self.frames
+        ]
+        return self.model_copy(update={"frames": frames})
+
+    def to_coco(
+        self,
+        *,
+        width: int | None = None,
+        height: int | None = None,
+        category_ids: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
+        """COCO export with one "image" per processed frame (id = frame index + 1)."""
+        return detections_to_coco(
+            [
+                (f.frame_index + 1, f"frame_{f.frame_index:06d}", width, height, f.detections)
+                for f in self.frames
+            ],
+            category_ids=category_ids,
+        )
+
     def annotate(
         self,
         video: Any,
@@ -402,6 +515,7 @@ class ClassificationResult(Theoria):
 
     praxis: Praxis = Praxis.CLASSIFY
     entries: list[ClassificationEntry] = Field(default_factory=list)
+    _items_field: ClassVar[str | None] = "entries"
 
     @property
     def top(self) -> ClassificationEntry | None:
@@ -420,6 +534,7 @@ class OcrResult(Theoria):
 
     praxis: Praxis = Praxis.OCR
     glyphs: list[Glyph] = Field(default_factory=list)
+    _items_field: ClassVar[str | None] = "glyphs"
 
     @property
     def lines(self) -> list[Glyph]:
@@ -481,6 +596,7 @@ class FaceResult(Theoria):
 
     praxis: Praxis = Praxis.FACE
     faces: list[Face] = Field(default_factory=list)
+    _items_field: ClassVar[str | None] = "faces"
 
     def annotate(
         self,
@@ -519,7 +635,95 @@ class ModerationResult(Theoria):
 
     praxis: Praxis = Praxis.MODERATE
     labels: list[ModerationLabel] = Field(default_factory=list)
+    _items_field: ClassVar[str | None] = "labels"
 
     @property
     def is_flagged(self) -> bool:
         return any(label.flagged for label in self.labels)
+
+
+def detections_to_coco(
+    images: Iterable[tuple[int, str | None, int | None, int | None, list[Detection]]],
+    *,
+    category_ids: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    """Build a COCO detection dict from ``(image_id, file_name, width, height, detections)``."""
+    entries = list(images)
+    if category_ids is None:
+        labels = sorted({d.label for _, _, _, _, dets in entries for d in dets})
+        category_ids = {name: i for i, name in enumerate(labels, start=1)}
+    coco_images: list[dict[str, Any]] = []
+    annotations: list[dict[str, Any]] = []
+    next_id = 1
+    for image_id, file_name, width, height, dets in entries:
+        record: dict[str, Any] = {"id": image_id}
+        if file_name is not None:
+            record["file_name"] = file_name
+        if width is not None:
+            record["width"] = width
+        if height is not None:
+            record["height"] = height
+        coco_images.append(record)
+        for d in dets:
+            if d.label not in category_ids:
+                continue
+            w = d.box.x_max - d.box.x_min
+            h = d.box.y_max - d.box.y_min
+            annotations.append(
+                {
+                    "id": next_id,
+                    "image_id": image_id,
+                    "category_id": category_ids[d.label],
+                    "bbox": [d.box.x_min, d.box.y_min, w, h],
+                    "area": w * h,
+                    "iscrowd": 0,
+                    "score": d.confidence.value,
+                }
+            )
+            next_id += 1
+    return {
+        "images": coco_images,
+        "annotations": annotations,
+        "categories": [{"id": cid, "name": name} for name, cid in category_ids.items()],
+    }
+
+
+T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class BatchItem(Generic[T]):
+    """Outcome for one input of a ``*_batch`` call: a result or an error, never both.
+
+    Attributes:
+        index: Position of the input in the submitted list.
+        source: Short description of the input (path, ``"<bytes>"``, ...).
+        result: The result, when the item succeeded.
+        error: The `Sphalma` that stopped this item (quota, validation, backend...).
+    """
+
+    index: int
+    source: str
+    result: T | None = None
+    error: Sphalma | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+    def unwrap(self) -> T:
+        """The result, or raise this item's error."""
+        if self.error is not None:
+            raise self.error
+        assert self.result is not None
+        return self.result
+
+
+class FrameResult(BaseModel):
+    """Detections for one frame of a stream, with its position in the source."""
+
+    model_config = ConfigDict(frozen=True)
+
+    frame_index: int
+    timestamp_s: float
+    result: DetectionResult

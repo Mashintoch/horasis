@@ -9,10 +9,13 @@ from typing import TYPE_CHECKING, Any
 
 from horasis.foundation.imaging import load_rgb, to_physis
 from horasis.foundation.schemas import (
+    ClassificationResult,
     Detection,
     DetectionResult,
     FaceResult,
     Kinesis,
+    ModerationResult,
+    OcrResult,
     Physis,
     VideoDetectionResult,
 )
@@ -399,3 +402,100 @@ def render_video(
             os.unlink(temp_file)
 
     return output_path
+
+
+def render_ocr(
+    image: Any,
+    result: OcrResult,
+    *,
+    box_color: tuple[int, int, int] | None = None,
+    text_color: tuple[int, int, int] = (255, 255, 255),
+    line_width: int = 2,
+    font_size: int = 14,
+    show_confidence: bool = False,
+    **_ignored: Any,
+) -> PILImage:
+    """Draw each OCR glyph's polygon (or box) with its text; nothing is saved."""
+    _, ImageDraw, ImageFont = _load_pillow()
+    annotated = _open_image(image).copy()
+    draw = ImageDraw.Draw(annotated)
+    try:
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except OSError:
+        font = ImageFont.load_default()
+    for g in result.glyphs:
+        color = box_color or (230, 40, 40)
+        if g.polygon:
+            draw.polygon([tuple(pt) for pt in g.polygon], outline=color, width=line_width)
+            x, y = min(p[0] for p in g.polygon), min(p[1] for p in g.polygon)
+        elif g.box is not None:
+            draw.rectangle(
+                [(g.box.x_min, g.box.y_min), (g.box.x_max, g.box.y_max)],
+                outline=color,
+                width=line_width,
+            )
+            x, y = g.box.x_min, g.box.y_min
+        else:
+            continue
+        caption = f"{g.text} {g.confidence.value:.2f}" if show_confidence else g.text
+        draw.text((x, max(y - font_size - 2, 0)), caption, fill=color, font=font)
+    return annotated
+
+
+def render_caption(
+    image: Any,
+    lines: Sequence[str],
+    *,
+    text_color: tuple[int, int, int] = (255, 255, 255),
+    font_size: int = 16,
+    **_ignored: Any,
+) -> PILImage:
+    """Return a copy of `image` with a text banner of `lines` along the top."""
+    _, ImageDraw, ImageFont = _load_pillow()
+    annotated = _open_image(image).copy()
+    draw = ImageDraw.Draw(annotated)
+    try:
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except OSError:
+        font = ImageFont.load_default()
+    banner_h = (font_size + 4) * max(len(lines), 1) + 6
+    draw.rectangle([(0, 0), (annotated.width, banner_h)], fill=(0, 0, 0))
+    for i, line in enumerate(lines):
+        draw.text((4, 3 + i * (font_size + 4)), line, fill=text_color, font=font)
+    return annotated
+
+
+def draw_result(image: Any, result: Any, **options: Any) -> PILImage:
+    """Draw any image-based result on `image` and return it, without saving.
+
+    Detections and faces get boxes, OCR gets polygons and text, and
+    classification / moderation results get a caption banner.
+    """
+    if isinstance(result, OcrResult):
+        return render_ocr(image, result, **options)
+    if isinstance(result, ClassificationResult):
+        top = sorted(result.entries, key=lambda e: -e.confidence.value)[:5]
+        return render_caption(image, [f"{e.label} {e.confidence.value:.2f}" for e in top], **options)
+    if isinstance(result, ModerationResult):
+        return render_caption(
+            image,
+            [f"{'FLAGGED ' if lb.flagged else ''}{lb.category} {lb.confidence.value:.2f}" for lb in result.labels],
+            **options,
+        )
+    items = getattr(result, "detections", None) or getattr(result, "faces", None)
+    if items is None and not hasattr(result, "frames"):
+        items = []
+    if items is None:
+        raise ValidationError("Video results cannot be drawn on a single image; use annotate()")
+    keys = {"show_labels", "show_confidence", "box_color", "text_color", "line_width", "font_size"}
+    kwargs = {k: v for k, v in options.items() if k in keys}
+    return _draw_boxes(
+        _open_image(image),
+        items,
+        show_labels=kwargs.get("show_labels", True),
+        show_confidence=kwargs.get("show_confidence", True),
+        box_color=kwargs.get("box_color"),
+        text_color=kwargs.get("text_color", (255, 255, 255)),
+        line_width=kwargs.get("line_width", 3),
+        font_size=kwargs.get("font_size", 16),
+    )

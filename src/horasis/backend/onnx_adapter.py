@@ -161,8 +161,9 @@ class OnnxAdapter(Mechane):
         labels: Class names given directly (takes precedence over files).
         input_size: ``(height, width)`` or a single int, used when the model
             has dynamic input dims. Default 640 (detect) / 224 (classify).
-        device: ``"auto"``, ``"cpu"`` or ``"cuda"``. ``"cuda"`` raises if
-            CUDA is unavailable; ``"auto"`` uses it when present.
+        device: ``"auto"``, ``"cpu"``, ``"cuda"`` or ``"mps"`` (runs on CPU); ``None``
+            follows ``Kanon.device``. ``"cuda"`` raises if CUDA is unavailable;
+            ``"auto"`` uses it when present.
         providers: Explicit ORT provider list; overrides `device`.
         conf_threshold, iou_threshold, max_detections: Detection filtering.
         output_format: Detection output layout (see above).
@@ -181,7 +182,7 @@ class OnnxAdapter(Mechane):
         labels_path: str | Path | None = None,
         labels: Sequence[str] | None = None,
         input_size: int | tuple[int, int] | None = None,
-        device: Literal["auto", "cpu", "cuda"] = "auto",
+        device: Literal["auto", "cpu", "cuda", "mps"] | None = None,
         providers: Sequence[str] | None = None,
         conf_threshold: float = 0.25,
         iou_threshold: float = 0.45,
@@ -204,7 +205,7 @@ class OnnxAdapter(Mechane):
         default_side = 640 if task == "detect" else 224
         side = input_size if input_size is not None else default_side
         self._input_size = (side, side) if isinstance(side, int) else (int(side[0]), int(side[1]))
-        self._device = device
+        self.device = device
         self._providers = list(providers) if providers else None
         self._conf = conf_threshold
         self._iou = iou_threshold
@@ -216,6 +217,7 @@ class OnnxAdapter(Mechane):
         self._std = np.asarray(std or (1.0, 1.0, 1.0), dtype=np.float32).reshape(3, 1, 1)
         self._top_k = top_k
         self._session: Any = session
+        self._injected: Any = session
 
     def _resolve_providers(self) -> list[str]:
         if self._providers:
@@ -223,9 +225,10 @@ class OnnxAdapter(Mechane):
         import onnxruntime as ort
 
         available = set(ort.get_available_providers())
-        if self._device == "cpu":
+        device = self.effective_device()
+        if device in ("cpu", "mps"):  # no MPS provider: fall back to CPU
             return ["CPUExecutionProvider"]
-        if self._device == "cuda" and "CUDAExecutionProvider" not in available:
+        if device == "cuda" and "CUDAExecutionProvider" not in available:
             raise BackendUnavailableError(
                 "device='cuda' requested but CUDAExecutionProvider is unavailable "
                 "(install onnxruntime-gpu and a matching CUDA runtime)"
@@ -249,6 +252,12 @@ class OnnxAdapter(Mechane):
             str(self._model_path), providers=self._resolve_providers()
         )
         return self._session
+
+    def is_loaded(self) -> bool:
+        return self._session is not None and self._session is not self._injected
+
+    def unload(self) -> None:
+        self._session = self._injected
 
     def warm_up(self) -> None:
         self._load_session()

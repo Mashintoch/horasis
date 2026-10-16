@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -96,6 +96,11 @@ class Kanon(BaseModel):
         tiers: Mapping of tier name -> :class:`TierRule`.
         telemetry_enabled: Whether :class:`~horasis.foundation.aisthesis.Aisthesis`
             hooks should fire.
+        device: Compute device for backends that can choose: ``auto`` (let
+            each backend decide; GPU if present), ``cpu``, ``cuda`` or ``mps``.
+        max_loaded_models: Cap on backends holding models in memory at once;
+            the least recently used is unloaded (and reloaded lazily on next use).
+            ``None`` means no cap.
         inputs: Image-loading policy (size limits, formats, URL opt-in).
         backend_order: Per-praxis backend preference, e.g.
             ``{"ocr": ["easyocr", "tesseract"]}``. The first registered
@@ -116,6 +121,8 @@ class Kanon(BaseModel):
     default_backend: str = "ultralytics"
     tiers: dict[str, TierRule] = Field(default_factory=dict)
     telemetry_enabled: bool = True
+    device: Literal["auto", "cpu", "cuda", "mps"] = "auto"
+    max_loaded_models: int | None = Field(default=None, gt=0)
     inputs: InputPolicy = Field(default_factory=InputPolicy)
     backend_order: dict[str, list[str]] = Field(default_factory=dict)
     fallback_order: list[str] = Field(default_factory=list)

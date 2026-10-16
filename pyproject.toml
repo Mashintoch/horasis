@@ -32,6 +32,8 @@ ultralytics = ["ultralytics>=8.2"]
 onnx = ["onnxruntime>=1.17"]
 remote = ["httpx>=0.27"]
 redis = ["redis>=5.0"]
+video = ["opencv-python-headless>=4.8"]
+otel = ["opentelemetry-api>=1.24"]
 ocr = ["easyocr>=1.7", "pytesseract>=0.3.10"]
 face = ["opencv-python-headless>=4.8"]
 moderation = ["transformers>=4.40", "torch>=2.2"]
@@ -45,7 +47,7 @@ dev = [
     "types-PyYAML",
     "httpx>=0.27",
 ]
-all = ["horasis[ultralytics,onnx,remote,ocr,face,moderation,redis,viz,demographics]"]
+all = ["horasis[ultralytics,onnx,remote,ocr,face,moderation,redis,video,otel,viz,demographics]"]
 
 [project.urls]
 Homepage = "https://github.com/mashintoch/horasis"
@@ -71,7 +73,7 @@ strict = true
 packages = ["horasis"]
 
 [[tool.mypy.overrides]]
-module = ["deepface", "deepface.*", "imageio_ffmpeg", "easyocr", "pytesseract", "onnxruntime", "cv2", "transformers", "redis"]
+module = ["deepface", "deepface.*", "imageio_ffmpeg", "easyocr", "pytesseract", "onnxruntime", "cv2", "transformers", "redis", "opentelemetry", "opentelemetry.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

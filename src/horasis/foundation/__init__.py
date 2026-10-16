@@ -7,9 +7,15 @@ exception hierarchy (:mod:`~horasis.foundation.sphalma`), result schemas
 (:mod:`~horasis.foundation.aisthesis`) that every other layer builds on.
 """
 
-from horasis.foundation.aisthesis import Aisthesis, LoggingAisthesis, NullAisthesis
+from horasis.foundation.aisthesis import (
+    Aisthesis,
+    LoggingAisthesis,
+    NullAisthesis,
+    OpenTelemetryAisthesis,
+)
 from horasis.foundation.kanon import InputPolicy, Kanon, QuotaRule, TierRule
 from horasis.foundation.schemas import (
+    BatchItem,
     BoundingBox,
     ClassificationEntry,
     ClassificationResult,
@@ -52,6 +58,7 @@ __all__ = [
     "AdapterError",
     "Aisthesis",
     "BackendUnavailableError",
+    "BatchItem",
     "BoundingBox",
     "ClassificationEntry",
     "ClassificationResult",
@@ -75,6 +82,7 @@ __all__ = [
     "NoBackendError",
     "NullAisthesis",
     "OcrResult",
+    "OpenTelemetryAisthesis",
     "Physis",
     "PluginError",
     "Praxis",

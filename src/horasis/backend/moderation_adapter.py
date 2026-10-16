@@ -58,6 +58,7 @@ class TransformersModerationAdapter(Mechane):
         self._safe = frozenset(c.lower() for c in safe_categories)
         self._device = device
         self._classifier: Any = classifier
+        self._injected: Any = classifier
 
     def _load_classifier(self) -> Any:
         if self._classifier is not None:
@@ -69,9 +70,18 @@ class TransformersModerationAdapter(Mechane):
                 "The 'transformers' package is required for the moderation backend. "
                 "Install it with: pip install 'horasis[moderation]'"
             ) from exc
-        kwargs: dict[str, Any] = {} if self._device is None else {"device": self._device}
+        device = self._device
+        if device is None and self.effective_device() != "auto":
+            device = self.effective_device()
+        kwargs: dict[str, Any] = {} if device is None else {"device": device}
         self._classifier = pipeline("image-classification", model=self._model, **kwargs)
         return self._classifier
+
+    def is_loaded(self) -> bool:
+        return self._classifier is not None and self._classifier is not self._injected
+
+    def unload(self) -> None:
+        self._classifier = self._injected
 
     def warm_up(self) -> None:
         self._load_classifier()

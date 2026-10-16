@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
 
 from horasis.backend.mechane import Mechane
@@ -16,14 +18,44 @@ class Taxis:
 
     def __init__(self) -> None:
         self._backends: dict[str, Mechane] = {}
+        self._lock = threading.Lock()
+        self._recent: OrderedDict[str, None] = OrderedDict()
+        self._device = "auto"
+        self._max_loaded: int | None = None
 
     def register(self, backend: Mechane) -> None:
         if not backend.name:
             raise ConfigurationError("Mechane.name must be a non-empty string")
+        backend.default_device = self._device
         self._backends[backend.name] = backend
 
     def unregister(self, name: str) -> None:
         self._backends.pop(name, None)
+        self._recent.pop(name, None)
+
+    def configure(self, *, device: str = "auto", max_loaded: int | None = None) -> None:
+        """Apply `Kanon.device` / `max_loaded_models` to current and future backends."""
+        self._device = device
+        self._max_loaded = max_loaded
+        for backend in self._backends.values():
+            backend.default_device = device
+
+    def touch(self, backend: Mechane) -> None:
+        """Mark `backend` most recently used and unload LRU backends over the cap."""
+        with self._lock:
+            self._recent[backend.name] = None
+            self._recent.move_to_end(backend.name)
+            cap = self._max_loaded
+            if cap is None:
+                return
+            loaded = [n for n in self._recent if n in self._backends and self._backends[n].is_loaded()]
+            for name in loaded:
+                if len(loaded) <= cap:
+                    break
+                if name == backend.name:
+                    continue
+                self._backends[name].unload()
+                loaded.remove(name)
 
     def get(self, name: str) -> Mechane:
         try:

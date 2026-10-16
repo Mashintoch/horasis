@@ -47,6 +47,7 @@ class EasyOCRAdapter(Mechane):
         self._gpu = gpu
         self._min_confidence = min_confidence
         self._reader: Any = reader
+        self._injected: Any = reader
 
     def _load_reader(self) -> Any:
         if self._reader is not None:
@@ -58,9 +59,18 @@ class EasyOCRAdapter(Mechane):
                 "The 'easyocr' package is required for EasyOCRAdapter. "
                 "Install it with: pip install 'horasis[ocr]'"
             ) from exc
-        kwargs: dict[str, Any] = {} if self._gpu is None else {"gpu": self._gpu}
+        gpu = self._gpu
+        if gpu is None and self.effective_device() != "auto":
+            gpu = self.effective_device() != "cpu"
+        kwargs: dict[str, Any] = {} if gpu is None else {"gpu": gpu}
         self._reader = easyocr.Reader(self._languages, **kwargs)
         return self._reader
+
+    def is_loaded(self) -> bool:
+        return self._reader is not None and self._reader is not self._injected
+
+    def unload(self) -> None:
+        self._reader = self._injected
 
     def warm_up(self) -> None:
         self._load_reader()
