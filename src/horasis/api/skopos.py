@@ -80,8 +80,8 @@ class _Capability:
         """Run `fn` over `images`; each item succeeds or fails on its own.
 
         Every item goes through the full access path, so quota and rate
-        limits are charged per item -- including items that then fail input
-        validation, since the charge precedes the work. An invalid API key aborts the whole
+        limits are charged per item, but only after the item passes input
+        validation -- items that fail it are not charged. An invalid API key aborts the whole
         batch (it would fail identically for every item); anything else
         that is a `Sphalma` is recorded on that item and the batch goes on.
         """
@@ -277,7 +277,7 @@ class ObjectDetector(_Capability):
             )
         return results
 
-    @limen(Praxis.DETECT)
+    @limen(Praxis.DETECT, validate_image=False)
     def detect_video(
         self,
         video: str | Path | bytes | Kinesis,
@@ -331,7 +331,7 @@ class ObjectDetector(_Capability):
         assert isinstance(result, VideoDetectionResult)
         return result
 
-    @limen(Praxis.DETECT)
+    @limen(Praxis.DETECT, validate_image=False)
     def detect_video_and_annotate(
         self,
         video: str | Path | bytes | Kinesis,

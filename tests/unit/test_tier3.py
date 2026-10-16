@@ -312,6 +312,20 @@ def test_batch_charges_quota_per_item_and_reports_exhaustion_per_item() -> None:
     assert client.usage("k").overall.used == 3
 
 
+def test_invalid_image_costs_no_quota() -> None:
+    client = make_client()
+    with pytest.raises(ValidationError):
+        client.detection.detect(b"garbage", api_key="k")
+    assert client.usage("k").overall.used == 0
+
+
+def test_batch_charges_only_items_that_pass_validation() -> None:
+    client = make_client()
+    items = client.detection.detect_batch([png_bytes(), b"garbage", png_bytes()], api_key="k")
+    assert [i.ok for i in items] == [True, False, True]
+    assert client.usage("k").overall.used == 2
+
+
 def test_every_capability_has_a_batch_method() -> None:
     client = make_client()
     imgs = [png_bytes(), png_bytes()]
@@ -515,8 +529,8 @@ def test_async_client_mirrors_sync() -> None:
             assert (await client.ocr.extract_text(png_bytes(), api_key="k")).praxis is Praxis.OCR
             assert (await client.face.detect_faces(png_bytes(), api_key="k")).praxis is Praxis.FACE
             assert (await client.moderation.moderate(png_bytes(), api_key="k")).praxis is Praxis.MODERATE
-            # detect 1 + classify batch 3 (the malformed item is charged too) + ocr/face/moderate 3
-            assert (await client.usage("k")).overall.used == 7
+            # detect 1 + classify batch 2 (the malformed item is not charged) + ocr/face/moderate 3
+            assert (await client.usage("k")).overall.used == 6
             assert await client.warmup() == ["fake"]
             with pytest.raises(InvalidApiKeyError):
                 await client.detection.detect(png_bytes(), api_key="nope")

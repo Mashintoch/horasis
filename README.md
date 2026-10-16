@@ -244,8 +244,9 @@ async with AsyncSkopos.build(validator=validator) as client:      # blocking bac
 - **Batches** (`detect_batch`, `classify_batch`, `extract_text_batch`,
   `detect_faces_batch`, `moderate_batch`) return one `BatchItem` per input.
   Each item has either a `.result` or an `.error` (a `Sphalma`), never both.
-  Quota and rate limits are charged **per item**, including items that then fail
-  validation. An invalid API key aborts the whole batch.
+  Quota and rate limits are charged **per item**, but only after the item passes
+  input validation (size, pixels, format, URL policy); items that fail validation
+  get a `BatchItem.error` and cost nothing. An invalid API key aborts the whole batch.
 - **Streams** (`client.detection.stream(source, every_n_frames=N, max_frames=...)`)
   yield a `FrameResult` per processed frame from a video file or camera index
   (needs `horasis[video]`). Each processed frame is charged as one detection call.
