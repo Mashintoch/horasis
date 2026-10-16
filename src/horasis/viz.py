@@ -17,6 +17,8 @@ from horasis.foundation.schemas import (
     ModerationResult,
     OcrResult,
     Physis,
+    PoseResult,
+    SegmentationResult,
     VideoDetectionResult,
 )
 from horasis.foundation.sphalma import ValidationError, VisualizationUnavailableError
@@ -465,6 +467,51 @@ def render_caption(
     return annotated
 
 
+_SKELETON = (
+    (0, 1), (0, 2), (1, 3), (2, 4), (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),
+    (5, 11), (6, 12), (11, 12), (11, 13), (13, 15), (12, 14), (14, 16),
+)  # fmt: skip
+
+
+def render_segments(image: Any, result: SegmentationResult, *, line_width: int = 2, **_ignored: Any) -> PILImage:
+    """Draw each segment's outline (and label colour) on a copy of `image`."""
+    _, ImageDraw, _ = _load_pillow()
+    annotated = _open_image(image).copy()
+    draw = ImageDraw.Draw(annotated)
+    for seg in result.segments:
+        color = _color_for_label(seg.label)
+        if len(seg.polygon) >= 3:
+            draw.polygon([tuple(p) for p in seg.polygon], outline=color, width=line_width)
+        else:
+            draw.rectangle(
+                [(seg.box.x_min, seg.box.y_min), (seg.box.x_max, seg.box.y_max)],
+                outline=color,
+                width=line_width,
+            )
+    return annotated
+
+
+def render_poses(
+    image: Any, result: PoseResult, *, line_width: int = 2, min_keypoint_conf: float = 0.3, **_ignored: Any
+) -> PILImage:
+    """Draw each person's skeleton and keypoints (COCO-17 models) on a copy of `image`."""
+    _, ImageDraw, _ = _load_pillow()
+    annotated = _open_image(image).copy()
+    draw = ImageDraw.Draw(annotated)
+    for pose in result.poses:
+        color = _color_for_label(pose.label)
+        pts = pose.keypoints
+        if len(pts) == 17:
+            for a, b in _SKELETON:
+                if min(pts[a].confidence.value, pts[b].confidence.value) >= min_keypoint_conf:
+                    draw.line([(pts[a].x, pts[a].y), (pts[b].x, pts[b].y)], fill=color, width=line_width)
+        for kp in pts:
+            if kp.confidence.value >= min_keypoint_conf:
+                r = line_width + 1
+                draw.ellipse([(kp.x - r, kp.y - r), (kp.x + r, kp.y + r)], fill=color)
+    return annotated
+
+
 def draw_result(image: Any, result: Any, **options: Any) -> PILImage:
     """Draw any image-based result on `image` and return it, without saving.
 
@@ -482,6 +529,10 @@ def draw_result(image: Any, result: Any, **options: Any) -> PILImage:
             [f"{'FLAGGED ' if lb.flagged else ''}{lb.category} {lb.confidence.value:.2f}" for lb in result.labels],
             **options,
         )
+    if isinstance(result, SegmentationResult):
+        return render_segments(image, result, **options)
+    if isinstance(result, PoseResult):
+        return render_poses(image, result, **options)
     items = getattr(result, "detections", None) or getattr(result, "faces", None)
     if items is None and not hasattr(result, "frames"):
         items = []

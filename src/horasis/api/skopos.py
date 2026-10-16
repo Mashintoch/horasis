@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +26,9 @@ from horasis.foundation.schemas import (
     Kinesis,
     ModerationResult,
     OcrResult,
+    PoseResult,
     Praxis,
+    SegmentationResult,
     VideoDetectionResult,
 )
 from horasis.foundation.sphalma import (
@@ -106,6 +108,7 @@ class ObjectDetector(_Capability):
         *,
         backend: str | None = None,
         estimate_demographics: bool = False,
+        options: Mapping[str, Any] | None = None,
         principal: Prosopon | None = None,
     ) -> DetectionResult:
         """Detect objects in `image`.
@@ -130,6 +133,7 @@ class ObjectDetector(_Capability):
             to_physis(image, self._access.kanon.inputs),
             backend=backend,
             estimate_demographics=estimate_demographics,
+            **(options or {}),
         )
         assert isinstance(result, DetectionResult)
         return result
@@ -478,10 +482,16 @@ class ImageClassifier(_Capability):
         image: ImageInput,
         *,
         backend: str | None = None,
+        options: Mapping[str, Any] | None = None,
         principal: Prosopon | None = None,
     ) -> ClassificationResult:
         """Classify `image`, returning ranked label/confidence entries."""
-        result = self._organon.run(Praxis.CLASSIFY, to_physis(image, self._access.kanon.inputs), backend=backend)
+        result = self._organon.run(
+            Praxis.CLASSIFY,
+            to_physis(image, self._access.kanon.inputs),
+            backend=backend,
+            **(options or {}),
+        )
         assert isinstance(result, ClassificationResult)
         return result
 
@@ -501,10 +511,16 @@ class TextExtractor(_Capability):
         image: ImageInput,
         *,
         backend: str | None = None,
+        options: Mapping[str, Any] | None = None,
         principal: Prosopon | None = None,
     ) -> OcrResult:
         """Extract text from `image` as a sequence of recognized glyphs."""
-        result = self._organon.run(Praxis.OCR, to_physis(image, self._access.kanon.inputs), backend=backend)
+        result = self._organon.run(
+            Praxis.OCR,
+            to_physis(image, self._access.kanon.inputs),
+            backend=backend,
+            **(options or {}),
+        )
         assert isinstance(result, OcrResult)
         return result
 
@@ -524,10 +540,16 @@ class FaceDetector(_Capability):
         image: ImageInput,
         *,
         backend: str | None = None,
+        options: Mapping[str, Any] | None = None,
         principal: Prosopon | None = None,
     ) -> FaceResult:
         """Detect faces in `image`."""
-        result = self._organon.run(Praxis.FACE, to_physis(image, self._access.kanon.inputs), backend=backend)
+        result = self._organon.run(
+            Praxis.FACE,
+            to_physis(image, self._access.kanon.inputs),
+            backend=backend,
+            **(options or {}),
+        )
         assert isinstance(result, FaceResult)
         return result
 
@@ -547,10 +569,16 @@ class ContentModerator(_Capability):
         image: ImageInput,
         *,
         backend: str | None = None,
+        options: Mapping[str, Any] | None = None,
         principal: Prosopon | None = None,
     ) -> ModerationResult:
         """Score `image` against moderation categories."""
-        result = self._organon.run(Praxis.MODERATE, to_physis(image, self._access.kanon.inputs), backend=backend)
+        result = self._organon.run(
+            Praxis.MODERATE,
+            to_physis(image, self._access.kanon.inputs),
+            backend=backend,
+            **(options or {}),
+        )
         assert isinstance(result, ModerationResult)
         return result
 
@@ -559,6 +587,64 @@ class ContentModerator(_Capability):
     ) -> list[BatchItem[ModerationResult]]:
         """Moderate each of `images`; a result or error per item, charged per item."""
         return self._run_batch(self.moderate, images, api_key, backend=backend)
+
+
+class ObjectSegmenter(_Capability):
+    """Public API for instance segmentation (boxes plus mask outlines)."""
+
+    @limen(Praxis.SEGMENT)
+    def segment(
+        self,
+        image: ImageInput,
+        *,
+        backend: str | None = None,
+        options: Mapping[str, Any] | None = None,
+        principal: Prosopon | None = None,
+    ) -> SegmentationResult:
+        """Segment object instances in `image`; each `Segment` has a box and a polygon."""
+        result = self._organon.run(
+            Praxis.SEGMENT,
+            to_physis(image, self._access.kanon.inputs),
+            backend=backend,
+            **(options or {}),
+        )
+        assert isinstance(result, SegmentationResult)
+        return result
+
+    def segment_batch(
+        self, images: Sequence[ImageInput], *, api_key: str, backend: str | None = None
+    ) -> list[BatchItem[SegmentationResult]]:
+        """Segment each of `images`; a result or error per item, charged per item."""
+        return self._run_batch(self.segment, images, api_key, backend=backend)
+
+
+class PoseEstimator(_Capability):
+    """Public API for human pose estimation (body keypoints)."""
+
+    @limen(Praxis.POSE)
+    def estimate(
+        self,
+        image: ImageInput,
+        *,
+        backend: str | None = None,
+        options: Mapping[str, Any] | None = None,
+        principal: Prosopon | None = None,
+    ) -> PoseResult:
+        """Estimate body poses in `image`; each `Pose` has a box and named keypoints."""
+        result = self._organon.run(
+            Praxis.POSE,
+            to_physis(image, self._access.kanon.inputs),
+            backend=backend,
+            **(options or {}),
+        )
+        assert isinstance(result, PoseResult)
+        return result
+
+    def estimate_batch(
+        self, images: Sequence[ImageInput], *, api_key: str, backend: str | None = None
+    ) -> list[BatchItem[PoseResult]]:
+        """Estimate poses in each of `images`; a result or error per item, charged per item."""
+        return self._run_batch(self.estimate, images, api_key, backend=backend)
 
 
 class Skopos:
@@ -576,6 +662,8 @@ class Skopos:
         ocr: :class:`TextExtractor`
         face: :class:`FaceDetector`
         moderation: :class:`ContentModerator`
+        segmentation: :class:`ObjectSegmenter`
+        pose: :class:`PoseEstimator`
     """
 
     def __init__(
@@ -609,6 +697,8 @@ class Skopos:
         self.ocr = TextExtractor(access=access, organon=organon)
         self.face = FaceDetector(access=access, organon=organon)
         self.moderation = ContentModerator(access=access, organon=organon)
+        self.segmentation = ObjectSegmenter(access=access, organon=organon)
+        self.pose = PoseEstimator(access=access, organon=organon)
 
     @property
     def kairos(self) -> Kairos:

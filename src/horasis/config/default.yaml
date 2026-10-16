@@ -27,13 +27,13 @@ tiers:
     quota:
       limit: 10000
       window_seconds: 86400
-    allowed_praxeis: [detect, classify, ocr, face, moderate]
+    allowed_praxeis: [detect, classify, ocr, face, moderate, segment, pose]
 
   enterprise:
     name: enterprise
     quota:
       limit: 1000000
       window_seconds: 86400
-    allowed_praxeis: [detect, classify, ocr, face, moderate]
+    allowed_praxeis: [detect, classify, ocr, face, moderate, segment, pose]
 
 extra: {}

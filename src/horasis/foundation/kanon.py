@@ -37,6 +37,8 @@ DEFAULT_PRAXIS_COST: dict[str, int] = {
     "face": 1,
     "ocr": 2,
     "moderate": 2,
+    "segment": 2,
+    "pose": 2,
 }
 
 
@@ -48,7 +50,15 @@ class TierRule(BaseModel):
     name: str
     quota: QuotaRule
     allowed_praxeis: list[str] = Field(
-        default_factory=lambda: ["detect", "classify", "ocr", "face", "moderate"],
+        default_factory=lambda: [
+            "detect",
+            "classify",
+            "ocr",
+            "face",
+            "moderate",
+            "segment",
+            "pose",
+        ],
         description="Praxis values this tier is permitted to invoke.",
     )
     rate: RateRule | None = Field(default=None, description="Per-minute limit across all praxeis.")

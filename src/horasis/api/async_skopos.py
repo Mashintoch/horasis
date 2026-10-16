@@ -27,6 +27,8 @@ from horasis.foundation.schemas import (
     FrameResult,
     ModerationResult,
     OcrResult,
+    PoseResult,
+    SegmentationResult,
 )
 from horasis.foundation.sphalma import InvalidApiKeyError, Sphalma
 
@@ -200,6 +202,44 @@ class AsyncContentModerator(_AsyncBase):
         return await self._batch(self._sync.moderate, images, api_key, backend=backend)
 
 
+class AsyncObjectSegmenter(_AsyncBase):
+    def __init__(self, sync: Any, executor: ThreadPoolExecutor) -> None:
+        super().__init__(executor)
+        self._sync = sync
+
+    async def segment(
+        self, image: ImageInput, *, api_key: str, backend: str | None = None
+    ) -> SegmentationResult:
+        result: SegmentationResult = await self._run(
+            self._sync.segment, image, api_key=api_key, backend=backend
+        )
+        return result
+
+    async def segment_batch(
+        self, images: Sequence[ImageInput], *, api_key: str, backend: str | None = None
+    ) -> list[BatchItem[SegmentationResult]]:
+        return await self._batch(self._sync.segment, images, api_key, backend=backend)
+
+
+class AsyncPoseEstimator(_AsyncBase):
+    def __init__(self, sync: Any, executor: ThreadPoolExecutor) -> None:
+        super().__init__(executor)
+        self._sync = sync
+
+    async def estimate(
+        self, image: ImageInput, *, api_key: str, backend: str | None = None
+    ) -> PoseResult:
+        result: PoseResult = await self._run(
+            self._sync.estimate, image, api_key=api_key, backend=backend
+        )
+        return result
+
+    async def estimate_batch(
+        self, images: Sequence[ImageInput], *, api_key: str, backend: str | None = None
+    ) -> list[BatchItem[PoseResult]]:
+        return await self._batch(self._sync.estimate, images, api_key, backend=backend)
+
+
 class AsyncSkopos:
     """Async client mirroring :class:`Skopos` (``await client.detection.detect(...)``).
 
@@ -222,6 +262,8 @@ class AsyncSkopos:
         self.ocr = AsyncTextExtractor(client.ocr, self._executor)
         self.face = AsyncFaceDetector(client.face, self._executor)
         self.moderation = AsyncContentModerator(client.moderation, self._executor)
+        self.segmentation = AsyncObjectSegmenter(client.segmentation, self._executor)
+        self.pose = AsyncPoseEstimator(client.pose, self._executor)
 
     @classmethod
     def build(cls, *, max_workers: int | None = None, **build_kwargs: Any) -> AsyncSkopos:

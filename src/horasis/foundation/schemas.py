@@ -26,6 +26,8 @@ class Praxis(str, Enum):
     OCR = "ocr"
     FACE = "face"
     MODERATE = "moderate"
+    SEGMENT = "segment"
+    POSE = "pose"
 
 
 class Doxa(BaseModel):
@@ -727,3 +729,67 @@ class FrameResult(BaseModel):
     frame_index: int
     timestamp_s: float
     result: DetectionResult
+
+
+class Segment(Detection):
+    """A detected instance with its outline.
+
+    Attributes:
+        polygon: The instance mask's contour as ``(x, y)`` pixel points.
+    """
+
+    polygon: list[Point] = Field(default_factory=list)
+
+
+class SegmentationResult(Theoria):
+    """Result of an instance-segmentation :class:`Praxis`."""
+
+    praxis: Praxis = Praxis.SEGMENT
+    segments: list[Segment] = Field(default_factory=list)
+    _items_field: ClassVar[str | None] = "segments"
+
+
+COCO_KEYPOINTS: tuple[str, ...] = (
+    "nose",
+    "left_eye",
+    "right_eye",
+    "left_ear",
+    "right_ear",
+    "left_shoulder",
+    "right_shoulder",
+    "left_elbow",
+    "right_elbow",
+    "left_wrist",
+    "right_wrist",
+    "left_hip",
+    "right_hip",
+    "left_knee",
+    "right_knee",
+    "left_ankle",
+    "right_ankle",
+)
+
+
+class Keypoint(BaseModel):
+    """One body landmark in pixel coordinates."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    x: float
+    y: float
+    confidence: Doxa
+
+
+class Pose(Detection):
+    """A detected person with body keypoints (COCO-17 order for standard models)."""
+
+    keypoints: list[Keypoint] = Field(default_factory=list)
+
+
+class PoseResult(Theoria):
+    """Result of a pose-estimation :class:`Praxis`."""
+
+    praxis: Praxis = Praxis.POSE
+    poses: list[Pose] = Field(default_factory=list)
+    _items_field: ClassVar[str | None] = "poses"

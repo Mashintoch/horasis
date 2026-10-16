@@ -3,9 +3,12 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import numpy as np
+
 from horasis.backend.mechane import Mechane
 from horasis.foundation.imaging import load_rgb
 from horasis.foundation.schemas import (
+    COCO_KEYPOINTS,
     BoundingBox,
     ClassificationEntry,
     ClassificationResult,
@@ -14,9 +17,14 @@ from horasis.foundation.schemas import (
     Doxa,
     FaceEstimate,
     FrameDetections,
+    Keypoint,
     Kinesis,
     Physis,
+    Pose,
+    PoseResult,
     Praxis,
+    Segment,
+    SegmentationResult,
     Theoria,
     VideoDetectionResult,
 )
@@ -35,7 +43,9 @@ class UltralyticsAdapter(Mechane):
         name: Registry name; defaults to `"ultralytics"`.
     """
 
-    supported_praxeis = frozenset({Praxis.DETECT, Praxis.CLASSIFY})
+    supported_praxeis = frozenset(
+        {Praxis.DETECT, Praxis.CLASSIFY, Praxis.SEGMENT, Praxis.POSE}
+    )
     supported_video_praxeis = frozenset({Praxis.DETECT})
     supported_video_annotate_praxeis = frozenset({Praxis.DETECT})
 
@@ -45,12 +55,18 @@ class UltralyticsAdapter(Mechane):
         detect_model: str = "yolo11n.pt",
         classify_model: str = "yolo11n-cls.pt",
         name: str = "ultralytics",
+        segment_model: str = "yolo11n-seg.pt",
+        pose_model: str = "yolo11n-pose.pt",
     ) -> None:
         self.name = name
         self._detect_model_path = detect_model
         self._classify_model_path = classify_model
         self._detect_model: Any = None
         self._classify_model: Any = None
+        self._segment_model_path = segment_model
+        self._pose_model_path = pose_model
+        self._segment_model: Any = None
+        self._pose_model: Any = None
 
     def _load_ultralytics(self) -> Any:
         try:
@@ -63,11 +79,21 @@ class UltralyticsAdapter(Mechane):
         return YOLO
 
     def is_loaded(self) -> bool:
-        return self._detect_model is not None or self._classify_model is not None
+        return any(
+            m is not None
+            for m in (
+                self._detect_model,
+                self._classify_model,
+                self._segment_model,
+                self._pose_model,
+            )
+        )
 
     def unload(self) -> None:
         self._detect_model = None
         self._classify_model = None
+        self._segment_model = None
+        self._pose_model = None
 
     def _with_device(self, options: dict[str, Any]) -> dict[str, Any]:
         """Add Ultralytics' ``device`` option from the effective device (auto = leave to it)."""
@@ -92,8 +118,12 @@ class UltralyticsAdapter(Mechane):
         try:
             if praxis is Praxis.DETECT:
                 result = self._infer_detect(image, **options)
-            else:
+            elif praxis is Praxis.CLASSIFY:
                 result = self._infer_classify(image, **options)
+            elif praxis is Praxis.SEGMENT:
+                result = self._infer_segment(image, **options)
+            else:
+                result = self._infer_pose(image, **options)
         except Sphalma:
             raise
         except Exception as exc:
@@ -351,6 +381,69 @@ class UltralyticsAdapter(Mechane):
             estimated_gender=dominant_gender,
             gender_confidence=gender_confidence,
         )
+
+    @staticmethod
+    def _raw_boxes(raw: Any) -> list[tuple[str, float, list[float]]]:
+        """``(label, confidence, xyxy)`` for each box in an Ultralytics result."""
+        names = raw.names
+        out: list[tuple[str, float, list[float]]] = []
+        for box in raw.boxes:
+            cls_id = int(box.cls[0])
+            label = names.get(cls_id, str(cls_id)) if isinstance(names, dict) else str(cls_id)
+            out.append((label, float(box.conf[0]), box.xyxy[0].tolist()))
+        return out
+
+    def _infer_segment(self, image: Physis, **options: Any) -> SegmentationResult:
+        YOLO = self._load_ultralytics()
+        if self._segment_model is None:
+            self._segment_model = YOLO(self._segment_model_path)
+        raw = self._segment_model(self._source_for(image), verbose=False, **options)[0]
+        polygons = (
+            []
+            if raw.masks is None
+            else [[(float(x), float(y)) for x, y in np.asarray(p)] for p in raw.masks.xy]
+        )
+        segments = [
+            Segment(
+                label=label,
+                confidence=Doxa(value=conf),
+                box=BoundingBox(x_min=xy[0], y_min=xy[1], x_max=xy[2], y_max=xy[3]),
+                polygon=polygon,
+            )
+            for (label, conf, xy), polygon in zip(self._raw_boxes(raw), polygons, strict=False)
+        ]
+        return SegmentationResult(backend=self.name, latency_ms=0.0, segments=segments)
+
+    def _infer_pose(self, image: Physis, **options: Any) -> PoseResult:
+        YOLO = self._load_ultralytics()
+        if self._pose_model is None:
+            self._pose_model = YOLO(self._pose_model_path)
+        raw = self._pose_model(self._source_for(image), verbose=False, **options)[0]
+        kp = raw.keypoints
+        points = np.asarray(kp.xy) if kp is not None else np.zeros((0, 0, 2))
+        scores = np.asarray(kp.conf) if kp is not None and kp.conf is not None else None
+        poses: list[Pose] = []
+        for i, (label, conf, xy) in enumerate(self._raw_boxes(raw)):
+            person = points[i] if i < len(points) else []
+            names = COCO_KEYPOINTS if len(person) == len(COCO_KEYPOINTS) else None
+            keypoints = [
+                Keypoint(
+                    name=names[k] if names else f"kp{k}",
+                    x=float(x),
+                    y=float(y),
+                    confidence=Doxa(value=float(scores[i][k]) if scores is not None else 1.0),
+                )
+                for k, (x, y) in enumerate(person)
+            ]
+            poses.append(
+                Pose(
+                    label=label,
+                    confidence=Doxa(value=conf),
+                    box=BoundingBox(x_min=xy[0], y_min=xy[1], x_max=xy[2], y_max=xy[3]),
+                    keypoints=keypoints,
+                )
+            )
+        return PoseResult(backend=self.name, latency_ms=0.0, poses=poses)
 
     def _infer_classify(self, image: Physis, **options: Any) -> ClassificationResult:
         YOLO = self._load_ultralytics()

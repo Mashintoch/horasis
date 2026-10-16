@@ -33,6 +33,7 @@ onnx = ["onnxruntime>=1.17"]
 remote = ["httpx>=0.27"]
 redis = ["redis>=5.0"]
 video = ["opencv-python-headless>=4.8"]
+server = ["fastapi>=0.110", "python-multipart>=0.0.9", "uvicorn>=0.29"]
 otel = ["opentelemetry-api>=1.24"]
 ocr = ["easyocr>=1.7", "pytesseract>=0.3.10"]
 face = ["opencv-python-headless>=4.8"]
@@ -47,7 +48,10 @@ dev = [
     "types-PyYAML",
     "httpx>=0.27",
 ]
-all = ["horasis[ultralytics,onnx,remote,ocr,face,moderation,redis,video,otel,viz,demographics]"]
+all = ["horasis[ultralytics,onnx,remote,ocr,face,moderation,redis,video,otel,server,viz,demographics]"]
+
+[project.scripts]
+horasis = "horasis.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/mashintoch/horasis"

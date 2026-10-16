@@ -25,7 +25,9 @@ from horasis.foundation.schemas import (
     ModerationResult,
     OcrResult,
     Physis,
+    PoseResult,
     Praxis,
+    SegmentationResult,
     Theoria,
 )
 from horasis.foundation.sphalma import (
@@ -34,6 +36,7 @@ from horasis.foundation.sphalma import (
     ExpiredApiKeyError,
     InvalidApiKeyError,
     QuotaExceededError,
+    RateLimitedError,
     RemoteError,
     RevokedApiKeyError,
     Sphalma,
@@ -46,6 +49,8 @@ _RESULT_TYPES: dict[Praxis, type[Theoria]] = {
     Praxis.OCR: OcrResult,
     Praxis.FACE: FaceResult,
     Praxis.MODERATE: ModerationResult,
+    Praxis.SEGMENT: SegmentationResult,
+    Praxis.POSE: PoseResult,
 }
 _RETRYABLE_STATUS = frozenset({502, 503, 504})
 
@@ -68,13 +73,25 @@ def map_error_response(status: int, body: Any, headers: Any = None) -> Sphalma:
         return AccessDeniedError(message, context=ctx)
     if status == 429:
         retry_after = _retry_after(headers)
+        if retry_after is None and isinstance(error.get("retry_after"), int | float):
+            retry_after = float(error["retry_after"])
         if retry_after is not None:
             ctx["retry_after"] = retry_after
+        if kind == "rate_limited":
+            return RateLimitedError(
+                message,
+                limit=int(error.get("limit", 0)),
+                retry_after=retry_after,
+                scope=str(error.get("scope", "rate")),
+                context=ctx,
+            )
         return QuotaExceededError(
             message,
             limit=int(error.get("limit", 0)),
             used=int(error.get("used", 0)),
             window_seconds=int(error.get("window_seconds", 0)),
+            retry_after=retry_after,
+            scope=str(error.get("scope", "quota")),
             context=ctx,
         )
     if status in (400, 413, 415, 422):
