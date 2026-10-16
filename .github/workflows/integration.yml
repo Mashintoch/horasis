@@ -1,0 +1,38 @@
+name: Integration (real models)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * 1"  # weekly, Mondays 05:00 UTC
+
+jobs:
+  real-models:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HORASIS_CACHE_DIR: ${{ github.workspace }}/.model-cache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install system packages
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr libgl1
+      - name: Install CPU-only PyTorch
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+      - name: Install horasis
+        run: pip install -e ".[all,dev]" onnx
+      - name: Cache models
+        uses: actions/cache@v4
+        with:
+          path: |
+            .model-cache
+            ~/.cache/huggingface
+            ~/.EasyOCR
+          key: models-${{ runner.os }}-${{ hashFiles('src/horasis/models.py', 'tests/integration/real/**') }}
+          restore-keys: models-${{ runner.os }}-
+      - name: Real-model tests
+        run: pytest -m integration -rs -q

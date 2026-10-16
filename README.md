@@ -409,8 +409,11 @@ pylint $(git ls-files '*.py')
 Version 1.1.0 (see [CHANGELOG.md](CHANGELOG.md)) supports Python 3.10–3.12.
 Everything above is implemented and covered by offline tests that use fake
 backends. The suite never downloads a model or touches the network. The
-`integration` pytest marker is reserved for real-model tests, which are skipped
-unless you pass `-m integration`. None ship yet.
+`integration` pytest marker covers the real-model tests in `tests/integration/real/`
+(Ultralytics, ONNX, EasyOCR, Tesseract, YuNet, moderation, remote). They are
+skipped unless you pass `-m integration`, and each one skips itself when its
+extra, binary or model is missing. A manual and weekly workflow
+(`.github/workflows/integration.yml`) runs them with everything installed.
 
 Known limits:
 
