@@ -21,24 +21,34 @@ class Taxis:
         self._lock = threading.Lock()
         self._recent: OrderedDict[str, None] = OrderedDict()
         self._device = "auto"
+        self._auto_download = False
         self._max_loaded: int | None = None
 
     def register(self, backend: Mechane) -> None:
         if not backend.name:
             raise ConfigurationError("Mechane.name must be a non-empty string")
         backend.default_device = self._device
+        backend.default_auto_download = self._auto_download
         self._backends[backend.name] = backend
 
     def unregister(self, name: str) -> None:
         self._backends.pop(name, None)
         self._recent.pop(name, None)
 
-    def configure(self, *, device: str = "auto", max_loaded: int | None = None) -> None:
-        """Apply `Kanon.device` / `max_loaded_models` to current and future backends."""
+    def configure(
+        self,
+        *,
+        device: str = "auto",
+        max_loaded: int | None = None,
+        auto_download_models: bool = False,
+    ) -> None:
+        """Apply `Kanon.device` / `max_loaded_models` / `auto_download_models` to all backends."""
         self._device = device
         self._max_loaded = max_loaded
+        self._auto_download = auto_download_models
         for backend in self._backends.values():
             backend.default_device = device
+            backend.default_auto_download = auto_download_models
 
     def touch(self, backend: Mechane) -> None:
         """Mark `backend` most recently used and unload LRU backends over the cap."""

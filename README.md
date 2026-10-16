@@ -231,7 +231,7 @@ lists what is registered.
 | `UltralyticsAdapter` | detect, classify, segment, pose (+ video detect) | Default; weights download on first use |
 | `OnnxAdapter` | detect *or* classify | Letterbox + NMS, CPU/CUDA, labels from a `<model>.labels.txt` / `.json` sidecar |
 | `EasyOCRAdapter` / `TesseractAdapter` | ocr | `Glyph`s with polygon and `line_index` |
-| `YuNetFaceAdapter` | face | Boxes, confidence, 5-point landmarks; **detection only, no recognition**; you supply the YuNet `.onnx` |
+| `YuNetFaceAdapter` | face | Boxes, confidence, 5-point landmarks; **detection only, no recognition**; model from `horasis models pull yunet` (or `model_path=`) |
 | `TransformersModerationAdapter` | moderate | Per-category scores; `flagged` uses `Kanon.moderation_threshold(s)` |
 | `RemoteAdapter` | all | httpx; timeouts, retries with backoff, errors mapped to `Sphalma` types |
 
@@ -286,7 +286,8 @@ metrics `horasis.calls`, `horasis.errors` and `horasis.latency_ms`. Pass it as
 ```bash
 horasis detect photo.jpg --json
 horasis ocr scan.png --backend tesseract
-horasis faces group.jpg --face-model yunet.onnx --draw faces.png
+horasis models pull yunet            # one-time, checksum-verified download into the cache
+horasis faces group.jpg --draw faces.png
 horasis classify|moderate|segment|pose IMAGE   # same flags: --backend --json --min-conf --draw --device
 horasis backends                                # built-in and plugin backends (and plugins that failed to load)
 
@@ -416,7 +417,7 @@ Known limits:
 - Rate limits (token buckets) are per process unless you use `RedisRateLimiter`. Quotas are shared via the SQLite and Redis stores.
 - `max_loaded_models` evicts whole backends, not individual models.
 - Ultralytics, Tesseract, EasyOCR, YuNet, the moderation model and onnxruntime have only been exercised through test doubles, never against the real engines or weights. Smoke-test each one you depend on.
-- The YuNet model file isn't downloaded for you.
+- Only the YuNet model is managed by `horasis models` (cache dir `HORASIS_CACHE_DIR`, default the platform user cache). Ultralytics, EasyOCR and transformers fetch their own weights; ONNX models are yours to supply. YuNet downloads automatically only with `Kanon(auto_download_models=True)`.
 - `HashedApiKeyValidator` keeps its records in memory. Persist them with `export_records()`.
 - Image URL fetching is off by default. When enabled it is SSRF-hardened: http(s) only, every resolved address must be globally routable, the connection is pinned to the validated IP (no DNS rebinding), redirects are followed manually (max 3, re-validated), bodies are streamed with a size cap and must be `image/*`. `InputPolicy.url_allow_hosts` / `url_deny_hosts` add a hostname policy. Video URLs (`Kinesis.from_url`, `stream`) use a simpler fetch without these checks, so keep them for trusted callers.
 - There's no admin API for keys, no object tracking, no result caching and no Docker image yet. See [docs/guide.md](docs/guide.md) for the roadmap.

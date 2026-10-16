@@ -101,6 +101,10 @@ class NoBackendError(BackendUnavailableError):
     """
 
 
+class ModelDownloadError(Sphalma):
+    """Raised when a model file cannot be downloaded or fails its checksum."""
+
+
 class AdapterError(Sphalma):
     """Raised when a backend adapter fails to execute inference."""
 

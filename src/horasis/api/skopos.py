@@ -689,7 +689,11 @@ class Skopos:
             rate_limiter=rate_limiter,
         )
         self._access = access
-        taxis.configure(device=kanon.device, max_loaded=kanon.max_loaded_models)
+        taxis.configure(
+            device=kanon.device,
+            max_loaded=kanon.max_loaded_models,
+            auto_download_models=kanon.auto_download_models,
+        )
         self._kairos = kairos or Kairos()
         organon = Organon(kanon=kanon, taxis=taxis, kairos=self._kairos)
 

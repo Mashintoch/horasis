@@ -128,6 +128,9 @@ class Kanon(BaseModel):
         praxis_cost: Units of quota/rate each praxis consumes per call.
         moderation_safe_categories: Categories that describe benign content
             (e.g. ``"normal"``); never flagged regardless of score.
+        auto_download_models: Let backends download missing model files (such as
+            the YuNet face model) on first use. Off by default; otherwise they
+            raise and tell you to run ``horasis models pull``.
         rate_limit_store: Where per-minute token buckets live: ``memory`` (per
             process) or ``redis`` (shared by all workers; needs `redis_url`).
         redis_url: Redis URL used when `rate_limit_store` is ``redis`` and
@@ -151,6 +154,7 @@ class Kanon(BaseModel):
     moderation_safe_categories: list[str] = Field(
         default_factory=lambda: ["normal", "safe", "sfw", "neutral", "drawings"]
     )
+    auto_download_models: bool = False
     rate_limit_store: Literal["memory", "redis"] = "memory"
     redis_url: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)

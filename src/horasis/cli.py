@@ -4,6 +4,7 @@ Commands::
 
     horasis detect|classify|ocr|faces|moderate|segment|pose IMAGE [options]
     horasis backends [--json]
+    horasis models list|pull NAME|path NAME|verify
     horasis serve [--host H] [--port P] [--keys-file FILE]   (needs horasis[server])
 
 The CLI is a local, single-user tool: it runs as an internal enterprise-tier
@@ -21,7 +22,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from horasis import __version__
+from horasis import __version__, models
 from horasis.access.keys import InMemoryApiKeyValidator
 from horasis.access.klimax import Klimax
 from horasis.access.stores import redis_backends
@@ -154,6 +155,12 @@ def build_parser() -> argparse.ArgumentParser:
     for name in COMMANDS:
         _add_common(sub.add_parser(name, help=f"run {name} on an image"), image=True)
     _add_common(sub.add_parser("backends", help="list registered and plugin backends"), image=False)
+    models_parser = sub.add_parser("models", help="manage downloadable model files")
+    msub = models_parser.add_subparsers(dest="models_command", required=True)
+    msub.add_parser("list", help="show known models and whether they are cached")
+    for cmd, text in (("pull", "download a model into the cache"), ("path", "print a model's cache path")):
+        msub.add_parser(cmd, help=text).add_argument("name")
+    msub.add_parser("verify", help="check cached models against their checksums")
     serve = sub.add_parser("serve", help="serve the HTTP API (needs horasis[server])")
     _add_common(serve, image=False)
     serve.add_argument("--host", default="127.0.0.1")
@@ -187,6 +194,29 @@ def _cmd_image(args: argparse.Namespace, out: Callable[[str], None]) -> int:
     if args.draw:
         result.draw(args.image).save(args.draw)
     out(result.to_json(indent=2) if args.json else format_result(result))
+    return 0
+
+
+def _cmd_models(args: argparse.Namespace, out: Callable[[str], None]) -> int:
+    if args.models_command == "list":
+        for spec in models.REGISTRY.values():
+            state = "cached" if models.is_cached(spec.name) else "not cached"
+            out(f"{spec.name:<10} {state:<11} {spec.license}  -- {spec.description}")
+        out(f"cache dir: {models.cache_dir()}")
+    elif args.models_command == "pull":
+        out(str(models.pull(args.name)))
+    elif args.models_command == "path":
+        out(str(models.model_path(args.name)))
+    else:
+        ok = True
+        for spec in models.REGISTRY.values():
+            if not models.is_cached(spec.name):
+                out(f"{spec.name}: not cached")
+                continue
+            good = models.verify(spec.name)
+            ok = ok and good
+            out(f"{spec.name}: {'ok' if good else 'CHECKSUM MISMATCH'}")
+        return 0 if ok else 1
     return 0
 
 
@@ -298,6 +328,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command in COMMANDS:
             return _cmd_image(args, print)
+        if args.command == "models":
+            return _cmd_models(args, print)
         if args.command == "backends":
             return _cmd_backends(args, print)
         return _cmd_serve(args, print, sys.argv[1:] if argv is None else argv)
