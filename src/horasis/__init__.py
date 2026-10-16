@@ -14,8 +14,9 @@ Quick start:
     >>> result = client.detection.detect("photo.jpg", api_key="demo-key")
 """
 
-from horasis.access.keys import ApiKeyValidator, InMemoryApiKeyValidator
+from horasis.access.keys import ApiKeyValidator, HashedApiKeyValidator, InMemoryApiKeyValidator
 from horasis.access.klimax import Klimax
+from horasis.access.metron import UsageReport
 from horasis.api.skopos import (
     ContentModerator,
     FaceDetector,
@@ -47,6 +48,7 @@ from horasis.foundation.sphalma import (
     InvalidApiKeyError,
     NoBackendError,
     QuotaExceededError,
+    RateLimitedError,
     RemoteError,
     RevokedApiKeyError,
     Sphalma,
@@ -70,6 +72,7 @@ __all__ = [
     "FaceDetector",
     "FaceResult",
     "Glyph",
+    "HashedApiKeyValidator",
     "ImageClassifier",
     "InMemoryApiKeyValidator",
     "InputPolicy",
@@ -84,11 +87,13 @@ __all__ = [
     "Physis",
     "Praxis",
     "QuotaExceededError",
+    "RateLimitedError",
     "RemoteError",
     "RevokedApiKeyError",
     "Skopos",
     "Sphalma",
     "TextExtractor",
+    "UsageReport",
     "ValidationError",
     "VideoDetectionResult",
     "VisualizationUnavailableError",

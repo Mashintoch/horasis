@@ -13,6 +13,8 @@ class Prosopon(BaseModel):
         tier: The caller's :class:`Klimax` tier.
         metadata: Free-form data attached by the key-validation backend
             (e.g. organization name, plan expiry).
+        scopes: Praxis values this caller's key may invoke, or ``None`` for
+            "everything the tier allows". Scopes only narrow the tier.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -20,6 +22,7 @@ class Prosopon(BaseModel):
     principal_id: str
     tier: Klimax
     metadata: dict[str, str] = Field(default_factory=dict)
+    scopes: list[str] | None = None
 
 
 class AnonymousProsopon(Prosopon):

@@ -18,6 +18,28 @@ class QuotaRule(BaseModel):
     window_seconds: int = Field(gt=0)
 
 
+class RateRule(BaseModel):
+    """Token-bucket rate limit: ``per_minute`` sustained, ``burst`` capacity."""
+
+    model_config = ConfigDict(frozen=True)
+
+    per_minute: int = Field(gt=0)
+    burst: int | None = Field(default=None, gt=0, description="Bucket size; defaults to per_minute.")
+
+    @property
+    def capacity(self) -> int:
+        return self.burst or self.per_minute
+
+
+DEFAULT_PRAXIS_COST: dict[str, int] = {
+    "detect": 1,
+    "classify": 1,
+    "face": 1,
+    "ocr": 2,
+    "moderate": 2,
+}
+
+
 class TierRule(BaseModel):
     """Configuration for one :class:`~horasis.access.klimax.Klimax` tier."""
 
@@ -28,6 +50,13 @@ class TierRule(BaseModel):
     allowed_praxeis: list[str] = Field(
         default_factory=lambda: ["detect", "classify", "ocr", "face", "moderate"],
         description="Praxis values this tier is permitted to invoke.",
+    )
+    rate: RateRule | None = Field(default=None, description="Per-minute limit across all praxeis.")
+    praxis_rates: dict[str, RateRule] = Field(
+        default_factory=dict, description="Extra per-minute limits for individual praxeis."
+    )
+    praxis_quotas: dict[str, QuotaRule] = Field(
+        default_factory=dict, description="Extra windowed quotas for individual praxeis."
     )
 
 
@@ -76,6 +105,7 @@ class Kanon(BaseModel):
         moderation_threshold: Score at or above which a moderation category
             is flagged, unless overridden in ``moderation_thresholds``.
         moderation_thresholds: Per-category flag thresholds.
+        praxis_cost: Units of quota/rate each praxis consumes per call.
         moderation_safe_categories: Categories that describe benign content
             (e.g. ``"normal"``); never flagged regardless of score.
         extra: Free-form namespace for plugin-specific settings.
@@ -91,6 +121,7 @@ class Kanon(BaseModel):
     fallback_order: list[str] = Field(default_factory=list)
     moderation_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     moderation_thresholds: dict[str, float] = Field(default_factory=dict)
+    praxis_cost: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_PRAXIS_COST))
     moderation_safe_categories: list[str] = Field(
         default_factory=lambda: ["normal", "safe", "sfw", "neutral", "drawings"]
     )
@@ -126,14 +157,26 @@ class Kanon(BaseModel):
             default_backend="ultralytics",
             telemetry_enabled=True,
             tiers={
-                "free": TierRule(name="free", quota=QuotaRule(limit=100, window_seconds=86400)),
-                "pro": TierRule(name="pro", quota=QuotaRule(limit=10_000, window_seconds=86400)),
+                "free": TierRule(
+                    name="free",
+                    quota=QuotaRule(limit=100, window_seconds=86400),
+                    rate=RateRule(per_minute=20, burst=10),
+                ),
+                "pro": TierRule(
+                    name="pro",
+                    quota=QuotaRule(limit=10_000, window_seconds=86400),
+                    rate=RateRule(per_minute=300, burst=60),
+                ),
                 "enterprise": TierRule(
                     name="enterprise",
                     quota=QuotaRule(limit=1_000_000, window_seconds=86400),
                 ),
             },
         )
+
+    def cost_for(self, praxis: str) -> int:
+        """Units one call to `praxis` consumes (OCR/moderation cost more)."""
+        return max(1, self.praxis_cost.get(praxis, 1))
 
     def moderation_threshold_for(self, category: str) -> float:
         """Flag threshold for a moderation `category` (per-category override wins)."""

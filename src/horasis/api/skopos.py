@@ -5,7 +5,9 @@ from pathlib import Path
 
 from horasis.access.keys import ApiKeyValidator, InMemoryApiKeyValidator
 from horasis.access.limen import AccessContext, limen
+from horasis.access.metron import Metron, QuotaStore, UsageReport
 from horasis.access.prosopon import Prosopon
+from horasis.access.ratelimit import TokenBucketLimiter
 from horasis.backend.mechane import Mechane
 from horasis.backend.taxis import Taxis
 from horasis.backend.ultralytics_adapter import UltralyticsAdapter
@@ -452,11 +454,20 @@ class Skopos:
         taxis: Taxis,
         validator: ApiKeyValidator,
         aisthesis: Aisthesis | None = None,
+        metron: Metron | None = None,
+        rate_limiter: TokenBucketLimiter | None = None,
     ) -> None:
         self._kanon = kanon
         self._taxis = taxis
         self._validator = validator
-        access = AccessContext.build(kanon=kanon, validator=validator, aisthesis=aisthesis)
+        access = AccessContext.build(
+            kanon=kanon,
+            validator=validator,
+            aisthesis=aisthesis,
+            metron=metron,
+            rate_limiter=rate_limiter,
+        )
+        self._access = access
         organon = Organon(kanon=kanon, taxis=taxis)
 
         self.detection = ObjectDetector(access=access, organon=organon)
@@ -464,6 +475,15 @@ class Skopos:
         self.ocr = TextExtractor(access=access, organon=organon)
         self.face = FaceDetector(access=access, organon=organon)
         self.moderation = ContentModerator(access=access, organon=organon)
+
+    def usage(self, api_key: str) -> UsageReport:
+        """Report what `api_key` has used and has left (consumes nothing).
+
+        Raises:
+            InvalidApiKeyError: (or Expired/Revoked) if the key is not valid.
+        """
+        principal = self._access.validator.validate(api_key)
+        return self._access.usage(principal)
 
     @property
     def kanon(self) -> Kanon:
@@ -481,6 +501,7 @@ class Skopos:
         validator: ApiKeyValidator | None = None,
         aisthesis: Aisthesis | None = None,
         backends: Sequence[Mechane] = (),
+        quota_store: QuotaStore | None = None,
     ) -> Skopos:
         """Convenience constructor wiring up the default Ultralytics backend.
 
@@ -490,6 +511,8 @@ class Skopos:
                 validator (register keys via the returned client's
                 `_validator`, or supply your own production validator).
             aisthesis: Telemetry sink; defaults to a no-op.
+            quota_store: Where quota counters live (default in-memory; use
+                `SQLiteQuotaStore` or `RedisQuotaStore` to share/persist them).
             backends: Extra `Mechane` backends to register after Ultralytics
                 (e.g. `EasyOCRAdapter()`, `YuNetFaceAdapter(model_path=...)`).
                 Route to them with `Kanon.backend_order`, or per call with
@@ -501,4 +524,10 @@ class Skopos:
         taxis.register(UltralyticsAdapter())
         for backend in backends:
             taxis.register(backend)
-        return cls(kanon=kanon, taxis=taxis, validator=validator, aisthesis=aisthesis)
+        return cls(
+            kanon=kanon,
+            taxis=taxis,
+            validator=validator,
+            aisthesis=aisthesis,
+            metron=Metron(quota_store) if quota_store else None,
+        )

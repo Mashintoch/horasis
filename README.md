@@ -65,6 +65,31 @@ Images are decoded **once**, at the API boundary:
 - **URLs are off by default.** Opt in with `Kanon(inputs=InputPolicy(allow_urls=True))`.
   If you do this for untrusted callers, also block requests to internal networks.
 
+## Access control
+
+```python
+from horasis import HashedApiKeyValidator, Klimax, Skopos
+from horasis.access import SQLiteQuotaStore   # or RedisQuotaStore (pip install horasis[redis])
+
+validator = HashedApiKeyValidator()           # stores only salted hashes, compares in constant time
+key = validator.issue(principal_id="alice", tier=Klimax.PRO,
+                      expires_at=None, scopes=["detect", "ocr"])   # shown once; keep it
+client = Skopos.build(validator=validator, quota_store=SQLiteQuotaStore("quota.db"))
+
+client.usage(key)   # UsageReport: used/remaining overall and per praxis, plus seconds until reset
+validator.revoke(key)
+```
+
+- **Cost-weighted quotas:** each call consumes `Kanon.praxis_cost[praxis]` units
+  (default: OCR and moderation 2, the rest 1). Counters are atomic in every store.
+- **Rate limits:** per-minute token buckets per tier (`TierRule.rate`) and per praxis
+  (`praxis_rates`); in-process, so each worker enforces its own bucket. Extra
+  windowed quotas per praxis via `praxis_quotas`.
+- **Errors:** `QuotaExceededError` and `RateLimitedError` carry `limit`, `scope`
+  and `retry_after` (seconds). Denied calls are refunded.
+- **Scopes** narrow what a key may call within its tier. `InMemoryApiKeyValidator`
+  keeps plaintext keys and is for tests and demos only.
+
 ## Backends and routing
 
 ```python
@@ -154,8 +179,7 @@ detection, content moderation, ONNX and remote adapters, input validation,
 config-driven backend routing. Real-model tests are marked `integration` and
 skipped by default (`pytest -m integration`).
 
-Not yet done: persistent/shared quota stores, per-minute rate limits, key
-hashing/expiry/scopes, async API, batching, streaming, a CLI and an HTTP
+Not yet done: shared (cross-process) rate limits, async API, batching, streaming, a CLI and an HTTP
 server (the remote adapter speaks the protocol documented in
 `horasis/backend/remote_adapter.py`; no server ships yet).
 

@@ -35,7 +35,15 @@ class AccessDeniedError(Sphalma):
 
 
 class QuotaExceededError(AccessDeniedError):
-    """Raised by :class:`~horasis.access.metron.Metron` when a quota is exhausted."""
+    """Raised by :class:`~horasis.access.metron.Metron` when a quota is exhausted.
+
+    Attributes:
+        limit: The limit that was hit.
+        used: Usage that the rejected call would have reached.
+        window_seconds: Length of the quota window.
+        retry_after: Seconds until the window resets (``None`` if unknown).
+        scope: Which limit: ``"quota"`` or ``"praxis:<name>"``.
+    """
 
     def __init__(
         self,
@@ -44,12 +52,41 @@ class QuotaExceededError(AccessDeniedError):
         limit: int,
         used: int,
         window_seconds: int,
+        retry_after: float | None = None,
+        scope: str = "quota",
         context: dict[str, object] | None = None,
     ) -> None:
         super().__init__(message, context=context)
         self.limit = limit
         self.used = used
         self.window_seconds = window_seconds
+        self.retry_after = retry_after
+        self.scope = scope
+
+
+class RateLimitedError(AccessDeniedError):
+    """Raised when a per-minute token-bucket rate limit rejects a call.
+
+    Attributes:
+        limit: Calls per minute allowed by the rule that was hit.
+        retry_after: Seconds until enough tokens refill (``None`` if the call
+            costs more than the bucket can ever hold).
+        scope: ``"rate"`` or ``"rate:<praxis>"``.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        limit: int,
+        retry_after: float | None,
+        scope: str = "rate",
+        context: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message, context=context)
+        self.limit = limit
+        self.retry_after = retry_after
+        self.scope = scope
 
 
 class BackendUnavailableError(Sphalma):
