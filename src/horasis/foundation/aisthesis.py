@@ -13,7 +13,6 @@ class Aisthesis(Protocol):
 
     def on_call_start(self, *, praxis: str, principal_id: str) -> None:
         """Fired when a public API call begins, after access checks pass."""
-        ...
 
     def on_call_end(
         self,
@@ -25,11 +24,9 @@ class Aisthesis(Protocol):
         success: bool,
     ) -> None:
         """Fired when a public API call completes, successfully or not."""
-        ...
 
     def on_error(self, *, praxis: str, principal_id: str, error: BaseException) -> None:
         """Fired whenever a `Sphalma` (or subclass) is raised on the request path."""
-        ...
 
 
 class NullAisthesis:

@@ -255,8 +255,6 @@ class UltralyticsAdapter(Mechane):
 
                 frame_to_write = orig_bgr
                 if detections:
-                    import numpy as np
-
                     frame_rgb = cv2.cvtColor(orig_bgr, cv2.COLOR_BGR2RGB)
                     annotated_pil = _draw_boxes(
                         PILImage.fromarray(frame_rgb),

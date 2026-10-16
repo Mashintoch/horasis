@@ -81,8 +81,6 @@ def decode_image(data: bytes, policy: InputPolicy | None = None) -> Image.Image:
         if policy.apply_exif_orientation:
             img = ImageOps.exif_transpose(img) or img
         return img.convert("RGB")
-    except ValidationError:
-        raise
     except _DECODE_ERRORS as exc:
         raise ValidationError(f"Could not decode image: {exc}") from exc
 
