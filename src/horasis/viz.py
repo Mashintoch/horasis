@@ -4,6 +4,8 @@ from __future__ import annotations
 
 # pylint: disable=import-outside-toplevel,too-many-arguments,too-many-locals,no-member,mixed-line-endings
 from collections.abc import Sequence
+
+import io
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
