@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,17 +8,30 @@ dynamic = ["version"]
 description = "A layered, plugin-friendly computer vision SDK with tiered, quota-aware access control."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "Paul Chibueze" }]
-keywords = ["computer-vision", "object-detection", "ocr", "sdk", "image-processing", "image-recognition", "deep-learning"]
+keywords = [
+    "computer-vision",
+    "object-detection",
+    "ocr",
+    "sdk",
+    "image-processing",
+    "image-recognition",
+    "deep-learning",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 dependencies = [
     "pydantic>=2.6",
@@ -26,41 +39,49 @@ dependencies = [
     "PyYAML>=6.0",
     "Pillow>=10.0",
     "numpy>=1.26",
-    "ultralytics>=8.2",
+    "platformdirs>=4.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Mashintoch/horasis"
+Repository = "https://github.com/Mashintoch/horasis"
+Issues = "https://github.com/Mashintoch/horasis/issues"
+Changelog = "https://github.com/Mashintoch/horasis/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 ultralytics = ["ultralytics>=8.2"]
 onnx = ["onnxruntime>=1.17"]
-remote = ["httpx>=0.27"]
-redis = ["redis>=5.0"]
-video = ["opencv-python-headless>=4.8"]
-server = ["fastapi>=0.110", "python-multipart>=0.0.9", "uvicorn>=0.29"]
-otel = ["opentelemetry-api>=1.24"]
 ocr = ["easyocr>=1.7", "pytesseract>=0.3.10"]
-face = ["opencv-python-headless>=4.8"]
+face = ["opencv-python>=4.8"]
 moderation = ["transformers>=4.40", "torch>=2.2"]
-viz = ["Pillow>=10.0", "opencv-python-headless>=4.8", "imageio>=2.34", "imageio-ffmpeg>=0.5"]
+remote = ["httpx>=0.27"]
+
+video = ["opencv-python>=4.8"]
+viz = ["opencv-python>=4.8", "imageio>=2.34", "imageio-ffmpeg>=0.5"]
+redis = ["redis>=5.0"]
+otel = ["opentelemetry-api>=1.24"]
+server = ["fastapi>=0.110", "python-multipart>=0.0.9", "uvicorn>=0.29"]
+
 demographics = ["deepface>=0.0.93", "tf-keras>=2.15"]
+
+all = [
+    "horasis[ultralytics,onnx,ocr,face,moderation,remote,video,viz,redis,otel,server]",
+]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "mypy>=1.9",
     "ruff>=0.4",
+    "pylint>=3.0",
     "types-PyYAML",
     "httpx>=0.27",
     "fakeredis[lua]>=2.23",
 ]
-all = ["horasis[ultralytics,onnx,remote,ocr,face,moderation,redis,video,otel,server,viz,demographics]"]
 
 [project.scripts]
 horasis = "horasis.cli:main"
 
-[project.urls]
-Homepage = "https://github.com/mashintoch/horasis"
-Issues = "https://github.com/mashintoch/horasis/issues"
-
-# Plugins register backends here, e.g.:
+# Third-party plugins register backends in their own pyproject.toml, e.g.:
 # [project.entry-points."horasis.backends"]
 # my_backend = "my_package.adapter:MyAdapter"
 
@@ -76,14 +97,31 @@ horasis = ["py.typed", "config/*.yaml"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-markers = ["integration: needs real models/network; skipped unless run with -m integration"]
+markers = [
+    "integration: needs real models/network; skipped unless run with -m integration",
+]
+
 
 [tool.mypy]
 strict = true
 packages = ["horasis"]
 
 [[tool.mypy.overrides]]
-module = ["deepface", "deepface.*", "imageio_ffmpeg", "easyocr", "pytesseract", "onnxruntime", "cv2", "transformers", "redis", "opentelemetry", "opentelemetry.*", "imageio", "imageio.*",    "platformdirs", "platformdirs.*"]
+module = [
+    "cv2",
+    "deepface",
+    "deepface.*",
+    "easyocr",
+    "imageio",
+    "imageio.*",
+    "imageio_ffmpeg",
+    "onnxruntime",
+    "opentelemetry",
+    "opentelemetry.*",
+    "pytesseract",
+    "redis",
+    "transformers",
+]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -100,7 +138,7 @@ fail-under = 9.0
 
 [tool.pylint.typecheck]
 signature-mutators = ["horasis.access.limen.limen"]
-# cv2 builds its API at import time, so pylint cannot see its members
+# cv2 builds its API at import time, so pylint cannot see its members.
 generated-members = ["cv2.*"]
 
 [tool.pylint."messages control"]
