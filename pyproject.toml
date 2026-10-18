@@ -121,6 +121,8 @@ module = [
     "pytesseract",
     "redis",
     "transformers",
+    "ultralytics",
+    "ultralytics.*",
 ]
 ignore_missing_imports = true
 
