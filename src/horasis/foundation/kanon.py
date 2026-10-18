@@ -81,7 +81,10 @@ class InputPolicy(BaseModel):
         max_pixels: Largest accepted decoded image (width * height); guards
             against decompression bombs.
         allowed_formats: Pillow format names that may be decoded.
-        url_timeout_seconds: Network timeout used when fetching a URL.
+        url_timeout_seconds: Connect and per-read timeout used when fetching a URL.
+        url_allow_hosts: If non-empty, only these hostnames may be fetched.
+            Resolved addresses must still be public.
+        url_deny_hosts: Hostnames never fetched (wins over the allow list).
         apply_exif_orientation: Rotate/flip pixels per the EXIF orientation tag.
     """
 
@@ -94,6 +97,8 @@ class InputPolicy(BaseModel):
         default_factory=lambda: ["JPEG", "PNG", "WEBP", "BMP", "TIFF", "GIF"]
     )
     url_timeout_seconds: float = Field(default=10.0, gt=0)
+    url_allow_hosts: list[str] = Field(default_factory=list)
+    url_deny_hosts: list[str] = Field(default_factory=list)
     apply_exif_orientation: bool = True
 
 
@@ -123,6 +128,13 @@ class Kanon(BaseModel):
         praxis_cost: Units of quota/rate each praxis consumes per call.
         moderation_safe_categories: Categories that describe benign content
             (e.g. ``"normal"``); never flagged regardless of score.
+        auto_download_models: Let backends download missing model files (such as
+            the YuNet face model) on first use. Off by default; otherwise they
+            raise and tell you to run ``horasis models pull``.
+        rate_limit_store: Where per-minute token buckets live: ``memory`` (per
+            process) or ``redis`` (shared by all workers; needs `redis_url`).
+        redis_url: Redis URL used when `rate_limit_store` is ``redis`` and
+            `Skopos.build` is not given a limiter/quota store to reuse.
         extra: Free-form namespace for plugin-specific settings.
     """
 
@@ -142,6 +154,9 @@ class Kanon(BaseModel):
     moderation_safe_categories: list[str] = Field(
         default_factory=lambda: ["normal", "safe", "sfw", "neutral", "drawings"]
     )
+    auto_download_models: bool = False
+    rate_limit_store: Literal["memory", "redis"] = "memory"
+    redis_url: str | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod

@@ -24,6 +24,15 @@ from horasis.foundation.schemas import (
 from horasis.orchestration.organon import Organon
 
 
+@pytest.fixture(autouse=True)
+def _isolated_model_cache(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep offline tests away from the user's real model cache (integration tests use it)."""
+    if request.node.get_closest_marker("integration") is None:
+        monkeypatch.setenv("HORASIS_CACHE_DIR", str(tmp_path_factory.mktemp("model-cache")))
+
+
 def png_bytes(width: int = 8, height: int = 6, color: tuple[int, int, int] = (200, 30, 30)) -> bytes:
     """A tiny but real PNG, for tests that go through input validation."""
     buf = io.BytesIO()

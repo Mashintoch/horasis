@@ -25,8 +25,9 @@ from horasis.access.keys import ApiKeyValidator
 from horasis.access.metron import Metron, UsageReport
 from horasis.access.nomos import Nomos
 from horasis.access.prosopon import Prosopon
-from horasis.access.ratelimit import TokenBucketLimiter
+from horasis.access.ratelimit import RateLimiter, TokenBucketLimiter
 from horasis.foundation.aisthesis import Aisthesis, NullAisthesis
+from horasis.foundation.imaging import to_physis
 from horasis.foundation.kanon import Kanon, QuotaRule
 from horasis.foundation.schemas import Praxis
 from horasis.foundation.sphalma import QuotaExceededError, Sphalma, ValidationError
@@ -46,7 +47,7 @@ class AccessContext:
     validator: ApiKeyValidator
     nomos: Nomos
     metron: Metron
-    rate_limiter: TokenBucketLimiter
+    rate_limiter: RateLimiter
     aisthesis: Aisthesis = field(default_factory=NullAisthesis)
 
     @classmethod
@@ -56,7 +57,7 @@ class AccessContext:
         kanon: Kanon,
         validator: ApiKeyValidator,
         metron: Metron | None = None,
-        rate_limiter: TokenBucketLimiter | None = None,
+        rate_limiter: RateLimiter | None = None,
         aisthesis: Aisthesis | None = None,
     ) -> AccessContext:
         return cls(
@@ -119,13 +120,32 @@ class AccessContext:
         )
 
 
-def limen(praxis: Praxis) -> Callable[[F], F]:
+def _validated_inputs(
+    access: AccessContext, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Decode/validate the image argument (first positional, or ``image=``) up front.
+
+    The decoded `Physis` replaces the raw input, so the wrapped method does not
+    decode twice and malformed input is rejected before anything is charged.
+    """
+    policy = access.kanon.inputs
+    if "image" in kwargs:
+        return args, {**kwargs, "image": to_physis(kwargs["image"], policy)}
+    if args:
+        return (to_physis(args[0], policy), *args[1:]), kwargs
+    return args, kwargs
+
+
+def limen(praxis: Praxis, *, validate_image: bool = True) -> Callable[[F], F]:
     """Decorator that enforces authentication, authorization, and quota.
 
     Args:
         praxis: The task type this method performs; used both for
             authorization against :class:`~horasis.access.nomos.Nomos` and
             for telemetry.
+        validate_image: Decode and validate the image argument *before* charging
+            quota, so invalid input costs nothing. Set False for non-image inputs
+            (video).
 
     The wrapped method must be called with an `api_key: str` keyword
     argument, and the wrapped instance must expose `self._access: AccessContext`.
@@ -148,6 +168,8 @@ def limen(praxis: Praxis) -> Callable[[F], F]:
 
             principal: Prosopon = access.validator.validate(api_key)
             access.nomos.authorize(principal, praxis)
+            if validate_image:
+                args, kwargs = _validated_inputs(access, args, kwargs)
             access.charge(principal, praxis)
 
             access.aisthesis.on_call_start(praxis=praxis.value, principal_id=principal.principal_id)

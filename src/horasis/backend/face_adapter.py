@@ -7,13 +7,20 @@ import time
 from pathlib import Path
 from typing import Any
 
+from horasis import models
 from horasis.backend._common import doxa
 from horasis.backend.mechane import Mechane
 from horasis.foundation.imaging import load_rgb
 from horasis.foundation.schemas import BoundingBox, Face, FaceResult, Physis, Praxis, Theoria
-from horasis.foundation.sphalma import AdapterError, BackendUnavailableError, Sphalma
+from horasis.foundation.sphalma import (
+    AdapterError,
+    BackendUnavailableError,
+    ModelDownloadError,
+    Sphalma,
+)
 
 MODEL_ENV_VAR = "HORASIS_YUNET_MODEL"
+MODEL_NAME = "yunet"
 LANDMARK_NAMES = ("right_eye", "left_eye", "nose", "mouth_right", "mouth_left")
 
 
@@ -24,12 +31,13 @@ class YuNetFaceAdapter(Mechane):
     It only *locates* faces -- it never identifies or recognizes anyone.
     Each :class:`Face` has a box, a confidence and (optionally) 5 landmarks.
 
-    The model file is **not** downloaded for you. Get
-    ``face_detection_yunet_2023mar.onnx`` from the OpenCV Zoo and pass its
-    path as `model_path` or set the ``HORASIS_YUNET_MODEL`` env var.
+    The model file is found in this order: `model_path`, the
+    ``HORASIS_YUNET_MODEL`` env var, then the horasis model cache. Fetch it
+    with ``horasis models pull yunet``, or set ``Kanon(auto_download_models=True)``
+    to download it on first use.
 
     Args:
-        model_path: Path to the YuNet ``.onnx`` file.
+        model_path: Path to the YuNet ``.onnx`` file (optional; see above).
         score_threshold: Minimum face confidence.
         nms_threshold: IoU threshold for suppressing overlapping faces.
         top_k: Candidates kept before NMS.
@@ -64,13 +72,7 @@ class YuNetFaceAdapter(Mechane):
     def _load_detector(self) -> Any:
         if self._detector is not None:
             return self._detector
-        path = self._model_path or os.environ.get(MODEL_ENV_VAR)
-        if not path or not Path(path).is_file():
-            raise BackendUnavailableError(
-                "YuNetFaceAdapter needs the YuNet model file. Download "
-                "face_detection_yunet_2023mar.onnx from the OpenCV Zoo and pass "
-                f"model_path=... or set {MODEL_ENV_VAR}."
-            )
+        path = self._resolve_model_path()
         try:
             import cv2
         except ImportError as exc:
@@ -82,6 +84,24 @@ class YuNetFaceAdapter(Mechane):
             str(path), "", (320, 320), self._score_threshold, self._nms_threshold, self._top_k
         )
         return self._detector
+
+    def _resolve_model_path(self) -> Path:
+        explicit = self._model_path or os.environ.get(MODEL_ENV_VAR)
+        if explicit:
+            if not Path(explicit).is_file():
+                raise BackendUnavailableError(f"YuNet model file not found: {explicit}")
+            return Path(explicit)
+        if models.is_cached(MODEL_NAME):
+            return models.model_path(MODEL_NAME)
+        if self.default_auto_download:
+            try:
+                return models.pull(MODEL_NAME)
+            except ModelDownloadError as exc:
+                raise BackendUnavailableError(f"Could not fetch the YuNet model: {exc}") from exc
+        raise BackendUnavailableError(
+            "The YuNet face model is not available. Run `horasis models pull yunet`, "
+            f"pass model_path=..., set {MODEL_ENV_VAR}, or use Kanon(auto_download_models=True)."
+        )
 
     def is_loaded(self) -> bool:
         return self._detector is not None and self._detector is not self._injected

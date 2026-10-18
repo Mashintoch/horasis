@@ -9,7 +9,7 @@ from horasis.access.keys import ApiKeyValidator, InMemoryApiKeyValidator
 from horasis.access.limen import AccessContext, limen
 from horasis.access.metron import Metron, QuotaStore, UsageReport
 from horasis.access.prosopon import Prosopon
-from horasis.access.ratelimit import TokenBucketLimiter
+from horasis.access.ratelimit import RateLimiter, RedisRateLimiter
 from horasis.backend.mechane import Mechane
 from horasis.backend.taxis import Taxis
 from horasis.backend.ultralytics_adapter import UltralyticsAdapter
@@ -33,6 +33,7 @@ from horasis.foundation.schemas import (
 )
 from horasis.foundation.sphalma import (
     BackendUnavailableError,
+    ConfigurationError,
     InvalidApiKeyError,
     Sphalma,
     ValidationError,
@@ -80,8 +81,8 @@ class _Capability:
         """Run `fn` over `images`; each item succeeds or fails on its own.
 
         Every item goes through the full access path, so quota and rate
-        limits are charged per item -- including items that then fail input
-        validation, since the charge precedes the work. An invalid API key aborts the whole
+        limits are charged per item, but only after the item passes input
+        validation -- items that fail it are not charged. An invalid API key aborts the whole
         batch (it would fail identically for every item); anything else
         that is a `Sphalma` is recorded on that item and the batch goes on.
         """
@@ -277,7 +278,7 @@ class ObjectDetector(_Capability):
             )
         return results
 
-    @limen(Praxis.DETECT)
+    @limen(Praxis.DETECT, validate_image=False)
     def detect_video(
         self,
         video: str | Path | bytes | Kinesis,
@@ -331,7 +332,7 @@ class ObjectDetector(_Capability):
         assert isinstance(result, VideoDetectionResult)
         return result
 
-    @limen(Praxis.DETECT)
+    @limen(Praxis.DETECT, validate_image=False)
     def detect_video_and_annotate(
         self,
         video: str | Path | bytes | Kinesis,
@@ -674,7 +675,7 @@ class Skopos:
         validator: ApiKeyValidator,
         aisthesis: Aisthesis | None = None,
         metron: Metron | None = None,
-        rate_limiter: TokenBucketLimiter | None = None,
+        rate_limiter: RateLimiter | None = None,
         kairos: Kairos | None = None,
     ) -> None:
         self._kanon = kanon
@@ -688,7 +689,11 @@ class Skopos:
             rate_limiter=rate_limiter,
         )
         self._access = access
-        taxis.configure(device=kanon.device, max_loaded=kanon.max_loaded_models)
+        taxis.configure(
+            device=kanon.device,
+            max_loaded=kanon.max_loaded_models,
+            auto_download_models=kanon.auto_download_models,
+        )
         self._kairos = kairos or Kairos()
         organon = Organon(kanon=kanon, taxis=taxis, kairos=self._kairos)
 
@@ -740,6 +745,10 @@ class Skopos:
         return self._access.usage(principal)
 
     @property
+    def rate_limiter(self) -> RateLimiter:
+        return self._access.rate_limiter
+
+    @property
     def kanon(self) -> Kanon:
         return self._kanon
 
@@ -756,6 +765,7 @@ class Skopos:
         aisthesis: Aisthesis | None = None,
         backends: Sequence[Mechane] = (),
         quota_store: QuotaStore | None = None,
+        rate_limiter: RateLimiter | None = None,
         kairos: Kairos | None = None,
     ) -> Skopos:
         """Convenience constructor wiring up the default Ultralytics backend.
@@ -768,6 +778,11 @@ class Skopos:
             aisthesis: Telemetry sink; defaults to a no-op.
             quota_store: Where quota counters live (default in-memory; use
                 `SQLiteQuotaStore` or `RedisQuotaStore` to share/persist them).
+            rate_limiter: Per-minute rate limiter; defaults to the in-process
+                token bucket, or a `RedisRateLimiter` when
+                ``Kanon.rate_limit_store == "redis"`` (it reuses the Redis client of
+                a `RedisQuotaStore` passed as `quota_store`). Use
+                `horasis.access.redis_backends()` to share one client explicitly.
             backends: Extra `Mechane` backends to register after Ultralytics
                 (e.g. `EasyOCRAdapter()`, `YuNetFaceAdapter(model_path=...)`).
                 Route to them with `Kanon.backend_order`, or per call with
@@ -775,6 +790,17 @@ class Skopos:
         """
         kanon = kanon or Kanon.default()
         validator = validator or InMemoryApiKeyValidator()
+        if rate_limiter is None and kanon.rate_limit_store == "redis":
+            shared_client = getattr(quota_store, "client", None)
+            if shared_client is None and not kanon.redis_url:
+                raise ConfigurationError(
+                    "Kanon.rate_limit_store is 'redis' but no redis_url (or Redis quota store) was given"
+                )
+            rate_limiter = (
+                RedisRateLimiter(shared_client)
+                if shared_client is not None
+                else RedisRateLimiter(url=str(kanon.redis_url))
+            )
         taxis = Taxis()
         taxis.register(UltralyticsAdapter())
         for backend in backends:
@@ -785,5 +811,6 @@ class Skopos:
             validator=validator,
             aisthesis=aisthesis,
             metron=Metron(quota_store) if quota_store else None,
+            rate_limiter=rate_limiter,
             kairos=kairos,
         )

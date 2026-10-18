@@ -48,6 +48,7 @@ from horasis.foundation.sphalma import (
     ConfigurationError,
     ExpiredApiKeyError,
     InvalidApiKeyError,
+    ModelDownloadError,
     NoBackendError,
     QuotaExceededError,
     RateLimitedError,
@@ -58,7 +59,7 @@ from horasis.foundation.sphalma import (
     VisualizationUnavailableError,
 )
 
-__version__ = "1.1.0"
+__version__ = "2.0.0"
 
 __all__ = [
     "AccessDeniedError",
@@ -84,6 +85,7 @@ __all__ = [
     "Kanon",
     "Kinesis",
     "Klimax",
+    "ModelDownloadError",
     "ModerationResult",
     "NoBackendError",
     "ObjectDetector",

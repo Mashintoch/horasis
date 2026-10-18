@@ -4,6 +4,7 @@ Commands::
 
     horasis detect|classify|ocr|faces|moderate|segment|pose IMAGE [options]
     horasis backends [--json]
+    horasis models list|pull NAME|path NAME|verify
     horasis serve [--host H] [--port P] [--keys-file FILE]   (needs horasis[server])
 
 The CLI is a local, single-user tool: it runs as an internal enterprise-tier
@@ -14,15 +15,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from horasis import __version__
+from horasis import __version__, models
 from horasis.access.keys import InMemoryApiKeyValidator
 from horasis.access.klimax import Klimax
+from horasis.access.stores import redis_backends
 from horasis.api.skopos import Skopos
 from horasis.backend.easyocr_adapter import EasyOCRAdapter
 from horasis.backend.face_adapter import YuNetFaceAdapter
@@ -152,10 +155,27 @@ def build_parser() -> argparse.ArgumentParser:
     for name in COMMANDS:
         _add_common(sub.add_parser(name, help=f"run {name} on an image"), image=True)
     _add_common(sub.add_parser("backends", help="list registered and plugin backends"), image=False)
+    models_parser = sub.add_parser("models", help="manage downloadable model files")
+    msub = models_parser.add_subparsers(dest="models_command", required=True)
+    msub.add_parser("list", help="show known models and whether they are cached")
+    for cmd, text in (("pull", "download a model into the cache"), ("path", "print a model's cache path")):
+        msub.add_parser(cmd, help=text).add_argument("name")
+    msub.add_parser("verify", help="check cached models against their checksums")
     serve = sub.add_parser("serve", help="serve the HTTP API (needs horasis[server])")
     _add_common(serve, image=False)
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument(
+        "--workers",
+        type=int,
+        default=int(os.environ.get("WEB_CONCURRENCY", "1")),
+        help="worker processes (default: $WEB_CONCURRENCY or 1)",
+    )
+    serve.add_argument(
+        "--redis-url",
+        default=os.environ.get("HORASIS_REDIS_URL"),
+        help="share quotas and rate limits across workers through Redis",
+    )
     serve.add_argument(
         "--keys-file",
         required=False,
@@ -174,6 +194,29 @@ def _cmd_image(args: argparse.Namespace, out: Callable[[str], None]) -> int:
     if args.draw:
         result.draw(args.image).save(args.draw)
     out(result.to_json(indent=2) if args.json else format_result(result))
+    return 0
+
+
+def _cmd_models(args: argparse.Namespace, out: Callable[[str], None]) -> int:
+    if args.models_command == "list":
+        for spec in models.REGISTRY.values():
+            state = "cached" if models.is_cached(spec.name) else "not cached"
+            out(f"{spec.name:<10} {state:<11} {spec.license}  -- {spec.description}")
+        out(f"cache dir: {models.cache_dir()}")
+    elif args.models_command == "pull":
+        out(str(models.pull(args.name)))
+    elif args.models_command == "path":
+        out(str(models.model_path(args.name)))
+    else:
+        ok = True
+        for spec in models.REGISTRY.values():
+            if not models.is_cached(spec.name):
+                out(f"{spec.name}: not cached")
+                continue
+            good = models.verify(spec.name)
+            ok = ok and good
+            out(f"{spec.name}: {'ok' if good else 'CHECKSUM MISMATCH'}")
+        return 0 if ok else 1
     return 0
 
 
@@ -202,7 +245,21 @@ def _cmd_backends(args: argparse.Namespace, out: Callable[[str], None]) -> int:
     return 0
 
 
-def _cmd_serve(args: argparse.Namespace, out: Callable[[str], None]) -> int:
+def warn_if_limiter_not_shared(workers: int, client: Skopos) -> bool:
+    """Log a warning when several workers each keep their own rate-limit buckets."""
+    if workers > 1 and not getattr(client.rate_limiter, "shared", False):
+        logging.getLogger("horasis").warning(
+            "Serving with %d workers but the rate limiter is in-process: every worker enforces "
+            "its own per-minute buckets, so the effective limit is up to %dx the configured one. "
+            "Pass --redis-url (or set Kanon.rate_limit_store: redis) to share them.",
+            workers,
+            workers,
+        )
+        return True
+    return False
+
+
+def _serve_client(args: argparse.Namespace) -> Skopos:
     kanon = Kanon.from_yaml(args.config) if args.config else Kanon.default()
     validator = InMemoryApiKeyValidator()
     if args.keys_file:
@@ -217,19 +274,51 @@ def _cmd_serve(args: argparse.Namespace, out: Callable[[str], None]) -> int:
         validator.register_simple(env_key, principal_id="env", tier=Klimax.ENTERPRISE)
     else:
         raise Sphalma("No API keys configured: pass --keys-file or set HORASIS_API_KEY")
+    update: dict[str, Any] = {"device": args.device}
+    extra: dict[str, Any] = {}
+    if args.redis_url:
+        extra["quota_store"], extra["rate_limiter"] = redis_backends(url=args.redis_url)
+    client = Skopos.build(
+        kanon=kanon.model_copy(update=update),
+        validator=validator,
+        backends=_default_backends(args),
+        **extra,
+    )
+    warn_if_limiter_not_shared(args.workers, client)
+    return client
+
+
+SERVE_ARGV_ENV = "HORASIS_SERVE_ARGV"
+
+
+def worker_app() -> Any:
+    """uvicorn app factory: each worker process rebuilds the client from the serve arguments."""
+    from horasis.server import create_app
+
+    argv = json.loads(os.environ[SERVE_ARGV_ENV])
+    return create_app(_serve_client(build_parser().parse_args(argv)))
+
+
+def _cmd_serve(args: argparse.Namespace, out: Callable[[str], None], argv: Sequence[str]) -> int:
     try:
         import uvicorn
 
         from horasis.server import create_app
     except ImportError:
         raise Sphalma("`horasis serve` needs: pip install 'horasis[server]'") from None
-    client = Skopos.build(
-        kanon=kanon.model_copy(update={"device": args.device}),
-        validator=validator,
-        backends=_default_backends(args),
-    )
+    client = _serve_client(args)
     out(f"serving on http://{args.host}:{args.port}")
-    uvicorn.run(create_app(client), host=args.host, port=args.port)
+    if args.workers > 1:
+        os.environ[SERVE_ARGV_ENV] = json.dumps(list(argv))
+        uvicorn.run(
+            "horasis.cli:worker_app",
+            factory=True,
+            host=args.host,
+            port=args.port,
+            workers=args.workers,
+        )
+    else:
+        uvicorn.run(create_app(client), host=args.host, port=args.port)
     return 0
 
 
@@ -239,9 +328,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command in COMMANDS:
             return _cmd_image(args, print)
+        if args.command == "models":
+            return _cmd_models(args, print)
         if args.command == "backends":
             return _cmd_backends(args, print)
-        return _cmd_serve(args, print)
+        return _cmd_serve(args, print, sys.argv[1:] if argv is None else argv)
     except Sphalma as exc:
         print(f"error: {exc.message}", file=sys.stderr)
         return 1

@@ -17,8 +17,8 @@ from horasis.access.metron import (
 )
 from horasis.access.nomos import Nomos
 from horasis.access.prosopon import AnonymousProsopon, Prosopon
-from horasis.access.ratelimit import TokenBucketLimiter
-from horasis.access.stores import RedisQuotaStore, SQLiteQuotaStore
+from horasis.access.ratelimit import RateLimiter, RedisRateLimiter, TokenBucketLimiter
+from horasis.access.stores import RedisQuotaStore, SQLiteQuotaStore, redis_backends
 
 __all__ = [
     "AccessContext",
@@ -32,10 +32,13 @@ __all__ = [
     "Nomos",
     "Prosopon",
     "QuotaStore",
+    "RateLimiter",
     "RedisQuotaStore",
+    "RedisRateLimiter",
     "SQLiteQuotaStore",
     "TokenBucketLimiter",
     "UsageReport",
     "WindowUsage",
     "limen",
+    "redis_backends",
 ]

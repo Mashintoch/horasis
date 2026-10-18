@@ -19,6 +19,9 @@ class Mechane(ABC):
     #: ``None`` to follow ``Kanon.device`` (set via ``Taxis.configure``).
     device: str | None = None
     default_device: str = "auto"
+    #: Whether backends may download missing model files on first use
+    #: (``Kanon.auto_download_models``, set via ``Taxis.configure``).
+    default_auto_download: bool = False
 
     @abstractmethod
     def infer(self, praxis: Praxis, image: Physis, **options: object) -> Theoria:
