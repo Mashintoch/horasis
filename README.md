@@ -1,12 +1,10 @@
-# horasis
+# Horasis
 
-horasis is a Python computer vision SDK. It puts object detection,
+Horasis is a Python computer vision SDK. It puts object detection,
 classification, segmentation, pose estimation, OCR, face detection and content
 moderation behind one API, with API keys, tiers, quotas and rate limits built
 in. Use it as a library, from the command line, or as a multi-tenant HTTP
 service.
-
-*horasis* is Greek for 'the act of seeing'.
 
 ## Contents
 
@@ -30,73 +28,47 @@ service.
 
 ## What horasis can do
 
-### Vision
-
-- Detect objects in an image or video, with labels, confidence and boxes
-- Classify images, returning top-k labels
-- Segment instances, with an outline per object
-- Estimate human pose, with keypoints per person
-- Read text (OCR), returning words with polygons and confidence, merged into lines
-- Detect faces, with boxes, confidence and 5-point landmarks. Detection only, never identification.
-- Moderate content, returning per-category scores and a `flagged` decision from configurable thresholds
-
-### Inputs
-
-- File paths, raw bytes, PIL images, numpy arrays or `Image` objects
-- Image URLs, if you opt in
-- Video files and webcams
-- Size, pixel count and format are validated, and EXIF orientation applied, once at the API boundary
-
-### Results
-
-- Every call returns a `Result`, never a raw backend object
-- Filter by confidence or label, draw annotations, and serialise to dict or JSON
-- Export detections as COCO
-- Annotate video output (`viz` extra)
-
-### Access control
-
-- API keys stored as salted hashes, compared in constant time
-- Key expiry, revocation and scopes
-- Tiers with quotas, plus per-task cost weights
-- Per-minute rate limits per tier and per task
-- Quotas in memory, SQLite or Redis, with atomic counters
-- Usage reports per key, and `retry_after` on every limit error
-
-### Runtime
-
-- Sync and async clients
-- Concurrent batches with per-item errors
-- Frame-skipping video streams
-- Lazy model loading, warmup, CPU/CUDA/MPS selection and a cap on loaded backends
-- Config-driven backend routing with fallbacks, or a backend forced per call
-
-### Integration
-
-- A CLI for every capability
-- A FastAPI server with API-key auth
-- A remote backend, so one horasis can call another
-- Lifecycle hooks, and OpenTelemetry traces and metrics
-- Third-party backends via Python entry points
+| Area | What you get |
+|---|---|
+| Vision | Object detection, classification, instance segmentation, pose estimation, OCR, face detection (no identification) and content moderation |
+| Inputs | File paths, bytes, PIL images, numpy arrays, video files and webcams; image URLs if you opt in. Size, format and EXIF orientation are handled once at the API boundary |
+| Results | Typed `Result` objects with filtering, drawing, JSON and COCO export, and video annotation |
+| Access control | Hashed API keys with expiry, revocation and scopes; tiers with cost-weighted quotas and per-minute rate limits; memory, SQLite or Redis storage; per-key usage reports |
+| Runtime | Sync and async clients, batches with per-item errors, frame-skipping video streams, lazy loading, CPU/CUDA/MPS selection, backend routing with fallbacks |
+| Integration | A CLI, a FastAPI server, a remote backend so one horasis can call another, lifecycle hooks, OpenTelemetry, and third-party backends via entry points |
 
 ## Install
 
-Requires Python 3.10–3.12. Install only what you need:
+Requires Python 3.10–3.12.
 
 ```bash
-pip install horasis[ultralytics]   # detection, classification, segmentation, pose (YOLO)
-pip install horasis[ocr]           # EasyOCR + pytesseract
-pip install horasis[face]          # OpenCV (YuNet face detection)
-pip install horasis[moderation]    # transformers image classifier
-pip install horasis[onnx]          # onnxruntime
-pip install horasis[remote]        # httpx client for a remote horasis server
-pip install horasis[redis]         # Redis-backed quota store
-pip install horasis[video]         # OpenCV, for detection.stream()
-pip install horasis[viz]           # video annotation output (imageio)
-pip install horasis[otel]          # OpenTelemetry spans and metrics
-pip install horasis[server]        # FastAPI server (`horasis serve`)
-pip install horasis[all]           # everything
+pip install horasis
 ```
+
+This installs horasis itself. The models and engines behind each capability
+are optional extras, so you only download what you use:
+
+| Extra | Adds |
+|---|---|
+| `ultralytics` | Detection, classification, segmentation and pose (YOLO) |
+| `ocr` | OCR with EasyOCR and Tesseract |
+| `face` | Face detection (YuNet) |
+| `moderation` | Content moderation (transformers) |
+| `onnx` | ONNX Runtime backend for your own models |
+| `remote` | Client for a remote horasis server |
+| `server` | HTTP server (`horasis serve`) |
+| `redis` | Shared quotas and rate limits in Redis |
+| `video` | Video and webcam streaming |
+| `viz` | Annotated video output |
+| `otel` | OpenTelemetry |
+| `all` | Everything above |
+
+```bash
+pip install "horasis[ultralytics,ocr]"
+```
+
+Without the matching extra, a call raises `BackendUnavailableError` naming what
+to install.
 
 horasis is Apache-2.0. The `ultralytics` extra installs Ultralytics, which is
 AGPL-3.0. If you run it behind a network service, the AGPL applies to that
