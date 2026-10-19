@@ -2,42 +2,39 @@ from __future__ import annotations
 
 import pytest
 
-from horasis.backend.mechane import Mechane
+from horasis.backend.base import Backend
 from horasis.backend.ultralytics_adapter import UltralyticsAdapter
-from horasis.foundation.schemas import Physis, Praxis
-from horasis.foundation.sphalma import BackendUnavailableError
-from tests.conftest import FakeMechane
+from horasis.foundation.errors import BackendUnavailableError
+from horasis.foundation.schemas import Image, Task
+from tests.conftest import FakeBackend
 
 
-@pytest.mark.parametrize("backend_factory", [UltralyticsAdapter, FakeMechane])
-def test_every_adapter_conforms_to_mechane(backend_factory) -> None:
-    """Every backend, present or future, must satisfy the `Mechane` contract."""
+@pytest.mark.parametrize("backend_factory", [UltralyticsAdapter, FakeBackend])
+def test_every_adapter_conforms_to_backend(backend_factory) -> None:
     backend = backend_factory()
-    assert isinstance(backend, Mechane)
+    assert isinstance(backend, Backend)
     assert isinstance(backend.name, str) and backend.name
-    assert isinstance(backend.supported_praxeis, frozenset)
-    assert all(isinstance(p, Praxis) for p in backend.supported_praxeis)
+    assert isinstance(backend.supported_tasks, frozenset)
+    assert all(isinstance(p, Task) for p in backend.supported_tasks)
 
 
 def test_ultralytics_adapter_declares_detect_and_classify() -> None:
     adapter = UltralyticsAdapter()
-    assert adapter.supports(Praxis.DETECT)
-    assert adapter.supports(Praxis.CLASSIFY)
-    assert not adapter.supports(Praxis.OCR)
-    assert not adapter.supports(Praxis.FACE)
-    assert not adapter.supports(Praxis.MODERATE)
+    assert adapter.supports(Task.DETECT)
+    assert adapter.supports(Task.CLASSIFY)
+    assert not adapter.supports(Task.OCR)
+    assert not adapter.supports(Task.FACE)
+    assert not adapter.supports(Task.MODERATE)
 
 
-def test_ultralytics_adapter_rejects_unsupported_praxis() -> None:
+def test_ultralytics_adapter_rejects_unsupported_task() -> None:
     adapter = UltralyticsAdapter()
     with pytest.raises(BackendUnavailableError):
-        adapter.infer(Praxis.OCR, Physis.from_bytes(b"x"))
+        adapter.infer(Task.OCR, Image.from_bytes(b"x"))
 
 
 def test_ultralytics_adapter_surfaces_missing_dependency() -> None:
-    """Without the `ultralytics` extra installed, inference must fail loudly
-    with `BackendUnavailableError`, not a bare `ImportError` or `AdapterError`.
-    """
+    """A missing extra raises BackendUnavailableError, not ImportError or AdapterError."""
     adapter = UltralyticsAdapter()
     try:
         import ultralytics  # noqa: F401
@@ -47,4 +44,4 @@ def test_ultralytics_adapter_surfaces_missing_dependency() -> None:
         pass
 
     with pytest.raises(BackendUnavailableError):
-        adapter.infer(Praxis.DETECT, Physis.from_bytes(b"x"))
+        adapter.infer(Task.DETECT, Image.from_bytes(b"x"))

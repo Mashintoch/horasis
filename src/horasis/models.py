@@ -1,9 +1,9 @@
-"""Model registry and download/cache manager.
+"""Model registry and download cache.
 
 Most backends fetch their own weights (Ultralytics, EasyOCR, transformers).
-This module covers the files that nothing else downloads for you -- today the
-YuNet face detector -- with pinned URLs and SHA-256 checksums, a per-user
-cache directory, and atomic, verified downloads.
+This module handles the files nothing else downloads, currently the YuNet
+face detector: pinned URLs, SHA-256 checksums, a per-user cache directory
+and atomic, verified downloads.
 
 Cache directory: ``$HORASIS_CACHE_DIR``, else the platform user cache dir
 (via ``platformdirs`` when installed), else ``~/.cache/horasis``.
@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from horasis.foundation.sphalma import ConfigurationError, ModelDownloadError
+from horasis.foundation.errors import ConfigurationError, ModelDownloadError
 
 CACHE_ENV_VAR = "HORASIS_CACHE_DIR"
 _CHUNK = 256 * 1024
@@ -74,7 +74,7 @@ def _urlopen(url: str, timeout: float) -> IO[bytes]:
 
 
 def cache_dir() -> Path:
-    """Directory models are cached in (not created)."""
+    """Return the model cache directory; it is not created."""
     override = os.environ.get(CACHE_ENV_VAR)
     if override:
         return Path(override).expanduser()
@@ -90,12 +90,12 @@ def get_spec(name: str) -> ModelSpec:
         return REGISTRY[name]
     except KeyError:
         raise ConfigurationError(
-            f"Unknown model {name!r}; available: {', '.join(sorted(REGISTRY))}"
+            f"unknown model {name!r}; available: {', '.join(sorted(REGISTRY))}"
         ) from None
 
 
 def model_path(name: str) -> Path:
-    """Where `name` lives (or will live) in the cache; the file may not exist yet."""
+    """Return the cache path for `name`; the file may not exist yet."""
     return cache_dir() / get_spec(name).filename
 
 
@@ -112,22 +112,21 @@ def file_sha256(path: Path) -> str:
 
 
 def verify(name: str) -> bool:
-    """True if `name` is cached and matches its registered checksum."""
+    """Return True if `name` is cached and matches its checksum."""
     path = model_path(name)
     return path.is_file() and file_sha256(path) == get_spec(name).sha256
 
 
 def pull(name: str, *, force: bool = False, opener: Opener | None = None) -> Path:
-    """Make sure `name` is in the cache and return its path.
+    """Download `name` into the cache if needed and return its path.
 
-    A cache hit returns immediately (use `verify` to re-check the checksum, or
-    ``force=True`` to download again). Otherwise the file is streamed to a
-    temporary file next to the destination, hashed, and atomically renamed into
-    place only if the checksum matches.
+    A cache hit returns at once; use `verify` to re-check it or ``force=True``
+    to download again. The download goes to a temporary file that is renamed
+    into place only if the checksum matches.
 
     Raises:
-        ModelDownloadError: on a network failure or a checksum mismatch (the
-            partial file is deleted).
+        ModelDownloadError: on a network failure or a checksum mismatch. The
+            partial file is deleted.
     """
     spec = get_spec(name)
     dest = model_path(name)
@@ -144,14 +143,14 @@ def pull(name: str, *, force: bool = False, opener: Opener | None = None) -> Pat
                 out.write(chunk)
         if digest.hexdigest() != spec.sha256:
             raise ModelDownloadError(
-                f"Checksum mismatch for model {name!r} downloaded from {spec.url}: "
-                f"expected {spec.sha256}, got {digest.hexdigest()}. The file was discarded.",
+                f"checksum mismatch for model {name!r} from {spec.url}: "
+                f"expected {spec.sha256}, got {digest.hexdigest()}; file discarded",
                 context={"model": name},
             )
         os.replace(tmp, dest)
     except OSError as exc:
         raise ModelDownloadError(
-            f"Could not download model {name!r} from {spec.url}: {exc}", context={"model": name}
+            f"cannot download model {name!r} from {spec.url}: {exc}", context={"model": name}
         ) from exc
     finally:
         tmp.unlink(missing_ok=True)

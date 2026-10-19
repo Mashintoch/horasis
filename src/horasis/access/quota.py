@@ -6,24 +6,24 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from horasis.foundation.kanon import QuotaRule
-from horasis.foundation.sphalma import QuotaExceededError
+from horasis.foundation.config import QuotaRule
+from horasis.foundation.errors import QuotaExceededError
 
 
 def window_start(window_seconds: int, now: float | None = None) -> int:
-    """Start (epoch seconds) of the fixed window containing `now`."""
+    """Return the start, in epoch seconds, of the window containing `now`."""
     t = int(time.time() if now is None else now)
     return t - (t % window_seconds)
 
 
 def seconds_until_reset(window_seconds: int, now: float | None = None) -> float:
-    """Seconds left in the current fixed window."""
+    """Return the seconds left in the current window."""
     t = time.time() if now is None else now
     return window_seconds - (t - window_start(window_seconds, t))
 
 
 class QuotaStore(Protocol):
-    """Pluggable counter backend for :class:`Metron`.
+    """Pluggable counter backend for :class:`QuotaManager`.
 
     Implementations must make ``increment_and_get`` atomic: concurrent
     callers (threads or processes) each see a distinct, consecutive count.
@@ -40,10 +40,10 @@ class QuotaStore(Protocol):
 
 
 class InMemoryQuotaStore:
-    """Thread-safe, fixed-window counter held in process memory.
+    """Fixed-window counters in process memory, safe across threads.
 
-    Not suitable for multi-process deployments; use ``SQLiteQuotaStore``
-    (one host) or ``RedisQuotaStore`` (many hosts).
+    For several processes use ``SQLiteQuotaStore`` (one host) or
+    ``RedisQuotaStore`` (many hosts).
     """
 
     def __init__(self) -> None:
@@ -73,7 +73,7 @@ class WindowUsage(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    scope: str = Field(description='"quota" for the overall limit or "praxis:<name>".')
+    scope: str = Field(description='"quota" for the overall limit or "task:<name>".')
     window_seconds: int
     limit: int
     used: int
@@ -82,13 +82,13 @@ class WindowUsage(BaseModel):
 
 
 class UsageReport(BaseModel):
-    """What a caller has used and has left, in quota units (see ``Kanon.praxis_cost``).
+    """Used and remaining quota units for one caller (see ``Config.task_cost``).
 
     Attributes:
         principal_id: Who the report is for.
         tier: Their tier name.
         overall: Usage against the tier's main quota window.
-        per_praxis: Usage per praxis (each praxis's own quota window if the
+        per_task: Usage per task (each task's own quota window if the
             tier defines one, otherwise the tier window with the overall limit).
     """
 
@@ -97,10 +97,10 @@ class UsageReport(BaseModel):
     principal_id: str
     tier: str
     overall: WindowUsage
-    per_praxis: dict[str, WindowUsage]
+    per_task: dict[str, WindowUsage]
 
 
-class Metron:
+class QuotaManager:
     """Enforces :class:`QuotaRule` limits per principal, weighted by call cost."""
 
     def __init__(self, store: QuotaStore | None = None) -> None:
@@ -129,8 +129,8 @@ class Metron:
         if count > rule.limit:
             self._store.increment_and_get(key, window_seconds=rule.window_seconds, amount=-cost)
             raise QuotaExceededError(
-                f"Quota exceeded for principal {principal_id!r} ({scope}): "
-                f"{rule.limit} units / {rule.window_seconds}s",
+                f"quota exceeded for principal {principal_id!r} ({scope}): "
+                f"{rule.limit} units per {rule.window_seconds}s",
                 limit=rule.limit,
                 used=count,
                 window_seconds=rule.window_seconds,
@@ -143,7 +143,7 @@ class Metron:
     def refund(
         self, principal_id: str, rule: QuotaRule, *, cost: int = 1, scope: str = "quota"
     ) -> None:
-        """Give back `cost` units (e.g. when a later check rejected the call)."""
+        """Give back `cost` units, e.g. when a later check rejected the call."""
         self._store.increment_and_get(
             self._key(principal_id, rule, scope), window_seconds=rule.window_seconds, amount=-cost
         )

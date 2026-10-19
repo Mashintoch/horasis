@@ -2,20 +2,20 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 
-from horasis.access.metron import Metron
-from horasis.foundation.kanon import QuotaRule
-from horasis.foundation.sphalma import QuotaExceededError
+from horasis.access.quota import QuotaManager
+from horasis.foundation.config import QuotaRule
+from horasis.foundation.errors import QuotaExceededError
 
 
-def test_metron_is_thread_safe_under_concurrent_load() -> None:
-    metron = Metron()
+def test_quota_is_thread_safe_under_concurrent_load() -> None:
+    quota_manager = QuotaManager()
     rule = QuotaRule(limit=50, window_seconds=3600)
     successes = 0
     failures = 0
 
     def attempt() -> str:
         try:
-            metron.check_and_consume("load-test-principal", rule)
+            quota_manager.check_and_consume("load-test-principal", rule)
             return "ok"
         except QuotaExceededError:
             return "denied"
@@ -31,15 +31,15 @@ def test_metron_is_thread_safe_under_concurrent_load() -> None:
     assert successes + failures == 200
 
 
-def test_metron_load_across_many_principals_stays_isolated() -> None:
-    metron = Metron()
+def test_quota_load_across_many_principals_stays_isolated() -> None:
+    quota_manager = QuotaManager()
     rule = QuotaRule(limit=5, window_seconds=3600)
 
     def hammer(principal_id: str) -> int:
         admitted = 0
         for _ in range(10):
             try:
-                metron.check_and_consume(principal_id, rule)
+                quota_manager.check_and_consume(principal_id, rule)
                 admitted += 1
             except QuotaExceededError:
                 pass

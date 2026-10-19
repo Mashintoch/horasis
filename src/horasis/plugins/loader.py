@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from importlib.metadata import EntryPoint, entry_points
 
-from horasis.backend.mechane import Mechane
-from horasis.backend.taxis import Taxis
-from horasis.foundation.sphalma import PluginError
+from horasis.backend.base import Backend
+from horasis.backend.registry import BackendRegistry
+from horasis.foundation.errors import PluginError
 
 ENTRY_POINT_GROUP = "horasis.backends"
 
 
-class Prosthesis:
-    """Discovers and registers third-party `Mechane` backends."""
+class PluginLoader:
+    """Discovers and registers third-party backends."""
 
     def __init__(self, group: str = ENTRY_POINT_GROUP) -> None:
         self._group = group
@@ -18,39 +18,37 @@ class Prosthesis:
     def discover_entry_points(self) -> list[EntryPoint]:
         return list(entry_points(group=self._group))
 
-    def load(self, entry_point: EntryPoint, **construction_kwargs: object) -> Mechane:
+    def load(self, entry_point: EntryPoint, **construction_kwargs: object) -> Backend:
         try:
             factory = entry_point.load()
         except Exception as exc:
             raise PluginError(
-                f"Failed to load plugin entry point {entry_point.name!r}: {exc}"
+                f"cannot load plugin entry point {entry_point.name!r}: {exc}"
             ) from exc
 
         try:
             instance = factory(**construction_kwargs)
         except Exception as exc:
             raise PluginError(
-                f"Failed to construct backend from plugin {entry_point.name!r}: {exc}"
+                f"cannot construct backend from plugin {entry_point.name!r}: {exc}"
             ) from exc
 
-        if not isinstance(instance, Mechane):
+        if not isinstance(instance, Backend):
             raise PluginError(
-                f"Plugin {entry_point.name!r} did not produce a Mechane instance "
+                f"plugin {entry_point.name!r} did not produce a Backend instance "
                 f"(got {type(instance).__name__})"
             )
         return instance
 
-    def discover(self, taxis: Taxis, *, strict: bool = False) -> list[str]:
-        """Discover and register all plugins in the entry-point group onto `taxis`.
+    def discover(self, registry: BackendRegistry, *, strict: bool = False) -> list[str]:
+        """Register every plugin in the entry-point group on `registry`.
 
         Args:
-            taxis: Registry to register discovered backends onto.
-            strict: If True, a single failing plugin raises `PluginError`
-                immediately. If False (default), failing plugins are
-                skipped and discovery continues.
+            strict: Raise `PluginError` on the first failing plugin instead
+                of skipping it.
 
         Returns:
-            Names of the backends successfully registered.
+            Names of the backends registered.
         """
         registered: list[str] = []
         for ep in self.discover_entry_points():
@@ -60,6 +58,6 @@ class Prosthesis:
                 if strict:
                     raise
                 continue
-            taxis.register(backend)
+            registry.register(backend)
             registered.append(backend.name)
         return registered

@@ -1,41 +1,10 @@
-"""Layer 1 -- Foundation.
+"""Layer 1: configuration, errors, result schemas and telemetry.
 
-The foundation layer has no dependencies on any other `horasis` layer.
-It defines configuration (:class:`~horasis.foundation.kanon.Kanon`), the
-exception hierarchy (:mod:`~horasis.foundation.sphalma`), result schemas
-(:mod:`~horasis.foundation.schemas`), and telemetry hooks
-(:mod:`~horasis.foundation.aisthesis`) that every other layer builds on.
+Imports nothing from the other `horasis` layers.
 """
 
-from horasis.foundation.aisthesis import (
-    Aisthesis,
-    LoggingAisthesis,
-    NullAisthesis,
-    OpenTelemetryAisthesis,
-)
-from horasis.foundation.kanon import InputPolicy, Kanon, QuotaRule, TierRule
-from horasis.foundation.schemas import (
-    BatchItem,
-    BoundingBox,
-    ClassificationEntry,
-    ClassificationResult,
-    Detection,
-    DetectionResult,
-    Doxa,
-    Face,
-    FaceResult,
-    FrameDetections,
-    Glyph,
-    Kinesis,
-    ModerationLabel,
-    ModerationResult,
-    OcrResult,
-    Physis,
-    Praxis,
-    Theoria,
-    VideoDetectionResult,
-)
-from horasis.foundation.sphalma import (
+from horasis.foundation.config import Config, InputPolicy, QuotaRule, TierRule
+from horasis.foundation.errors import (
     AccessDeniedError,
     AdapterError,
     BackendUnavailableError,
@@ -49,53 +18,78 @@ from horasis.foundation.sphalma import (
     QuotaExceededError,
     RemoteError,
     RevokedApiKeyError,
-    Sphalma,
     ValidationError,
     VisualizationUnavailableError,
+)
+from horasis.foundation.schemas import (
+    BatchItem,
+    BoundingBox,
+    ClassificationEntry,
+    ClassificationResult,
+    Confidence,
+    Detection,
+    DetectionResult,
+    Face,
+    FaceResult,
+    FrameDetections,
+    Image,
+    ModerationLabel,
+    ModerationResult,
+    OcrResult,
+    Result,
+    Task,
+    TextRegion,
+    Video,
+    VideoDetectionResult,
+)
+from horasis.foundation.telemetry import (
+    LoggingTelemetry,
+    NullTelemetry,
+    OTelTelemetry,
+    Telemetry,
 )
 
 __all__ = [
     "AccessDeniedError",
     "AdapterError",
-    "Aisthesis",
     "BackendUnavailableError",
     "BatchItem",
     "BoundingBox",
     "ClassificationEntry",
     "ClassificationResult",
+    "Confidence",
+    "Config",
     "ConfigurationError",
     "Detection",
     "DetectionResult",
-    "Doxa",
     "ExpiredApiKeyError",
     "Face",
     "FaceResult",
     "FrameDetections",
-    "Glyph",
     "HorasisError",
+    "Image",
     "InputPolicy",
     "InvalidApiKeyError",
-    "Kanon",
-    "Kinesis",
-    "LoggingAisthesis",
+    "LoggingTelemetry",
     "ModelDownloadError",
     "ModerationLabel",
     "ModerationResult",
     "NoBackendError",
-    "NullAisthesis",
+    "NullTelemetry",
+    "OTelTelemetry",
     "OcrResult",
-    "OpenTelemetryAisthesis",
-    "Physis",
     "PluginError",
-    "Praxis",
     "QuotaExceededError",
     "QuotaRule",
     "RemoteError",
+    "Result",
     "RevokedApiKeyError",
-    "Sphalma",
-    "Theoria",
+    "Task",
+    "Telemetry",
+    "TextRegion",
     "TierRule",
     "ValidationError",
+    "Video",
     "VideoDetectionResult",
     "VisualizationUnavailableError",
 ]

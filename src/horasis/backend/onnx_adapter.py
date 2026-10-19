@@ -9,10 +9,16 @@ from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
-from PIL import Image
+from PIL import Image as PILImage
 
-from horasis.backend._common import doxa
-from horasis.backend.mechane import Mechane
+from horasis.backend._common import to_confidence
+from horasis.backend.base import Backend
+from horasis.foundation.errors import (
+    AdapterError,
+    BackendUnavailableError,
+    ConfigurationError,
+    HorasisError,
+)
 from horasis.foundation.imaging import load_rgb
 from horasis.foundation.schemas import (
     BoundingBox,
@@ -20,15 +26,9 @@ from horasis.foundation.schemas import (
     ClassificationResult,
     Detection,
     DetectionResult,
-    Physis,
-    Praxis,
-    Theoria,
-)
-from horasis.foundation.sphalma import (
-    AdapterError,
-    BackendUnavailableError,
-    ConfigurationError,
-    Sphalma,
+    Image,
+    Result,
+    Task,
 )
 
 OutputFormat = Literal["auto", "yolov8", "yolov5", "nms"]
@@ -60,7 +60,7 @@ def load_labels(model_path: str | Path, labels_path: str | Path | None = None) -
     for path in candidates:
         if not path.is_file():
             if labels_path is not None:
-                raise ConfigurationError(f"Labels file not found: {path}")
+                raise ConfigurationError(f"labels file not found: {path}")
             continue
         try:
             if path.suffix == ".json":
@@ -74,25 +74,25 @@ def load_labels(model_path: str | Path, labels_path: str | Path | None = None) -
                 return [str(x) for x in raw]
             return [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
         except (ValueError, TypeError, OSError) as exc:
-            raise ConfigurationError(f"Could not parse labels file {path}: {exc}") from exc
+            raise ConfigurationError(f"cannot parse labels file {path}: {exc}") from exc
     return []
 
 
 def letterbox(
-    image: Image.Image, size: tuple[int, int]
+    image: PILImage.Image, size: tuple[int, int]
 ) -> tuple[np.ndarray[Any, Any], float, tuple[float, float]]:
     """Resize keeping aspect ratio and pad to `size` ``(height, width)``.
 
     Returns:
-        ``(chw_float01, scale, (pad_x, pad_y))`` -- a ``(3, H, W)`` array in
+        ``(chw_float01, scale, (pad_x, pad_y))``: a ``(3, H, W)`` array in
         ``0..1`` plus what is needed to map boxes back to the original image.
     """
     height, width = size
     scale = min(height / image.height, width / image.width)
     new_w = max(1, round(image.width * scale))
     new_h = max(1, round(image.height * scale))
-    resized = image.resize((new_w, new_h), Image.Resampling.BILINEAR)
-    canvas = Image.new("RGB", (width, height), (_PAD_VALUE,) * 3)
+    resized = image.resize((new_w, new_h), PILImage.Resampling.BILINEAR)
+    canvas = PILImage.new("RGB", (width, height), (_PAD_VALUE,) * 3)
     pad_x, pad_y = (width - new_w) // 2, (height - new_h) // 2
     canvas.paste(resized, (pad_x, pad_y))
     arr = np.asarray(canvas, dtype=np.float32) / 255.0
@@ -100,15 +100,15 @@ def letterbox(
 
 
 def center_crop_resize(
-    image: Image.Image, size: tuple[int, int], crop_pct: float = 0.875
+    image: PILImage.Image, size: tuple[int, int], crop_pct: float = 0.875
 ) -> np.ndarray[Any, Any]:
-    """Classification preprocessing: resize short side, centre-crop, scale to 0..1 (CHW)."""
+    """Resize the short side, centre-crop and scale to 0..1 (CHW) for classification."""
     height, width = size
     short = round(min(height, width) / crop_pct)
     scale = short / min(image.width, image.height)
     resized = image.resize(
         (max(width, round(image.width * scale)), max(height, round(image.height * scale))),
-        Image.Resampling.BILINEAR,
+        PILImage.Resampling.BILINEAR,
     )
     left, top = (resized.width - width) // 2, (resized.height - height) // 2
     cropped = resized.crop((left, top, left + width, top + height))
@@ -118,7 +118,7 @@ def center_crop_resize(
 def nms(
     boxes: np.ndarray[Any, Any], scores: np.ndarray[Any, Any], iou_threshold: float
 ) -> list[int]:
-    """Greedy non-maximum suppression over ``xyxy`` boxes; returns kept indices."""
+    """Run greedy non-maximum suppression over ``xyxy`` boxes; return kept indices."""
     order = scores.argsort()[::-1]
     areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
     keep: list[int] = []
@@ -144,14 +144,14 @@ def softmax(logits: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
     return np.asarray(exp / exp.sum())
 
 
-class OnnxAdapter(Mechane):
-    """`Mechane` that runs a detection *or* classification ONNX model.
+class OnnxAdapter(Backend):
+    """`Backend` that runs a detection or classification ONNX model.
 
-    One instance serves one model/task (register two instances with
-    different names to serve both). Detection supports the common YOLO
-    export layouts -- YOLOv8/11 ``(1, 4+nc, N)``, YOLOv5 ``(1, N, 5+nc)``,
-    and end-to-end ``(1, N, 6)`` with NMS already applied -- selected by
-    `output_format` (``"auto"`` guesses from the shape). Input is NCHW float.
+    One instance serves one model and task; register two instances under
+    different names to serve both. Detection supports the common YOLO export
+    layouts, selected by `output_format` (``"auto"`` guesses from the shape):
+    YOLOv8/11 ``(1, 4+nc, N)``, YOLOv5 ``(1, N, 5+nc)`` and end-to-end
+    ``(1, N, 6)`` with NMS already applied. Input is NCHW float.
 
     Args:
         model_path: Path to the ``.onnx`` file (opened lazily).
@@ -162,7 +162,7 @@ class OnnxAdapter(Mechane):
         input_size: ``(height, width)`` or a single int, used when the model
             has dynamic input dims. Default 640 (detect) / 224 (classify).
         device: ``"auto"``, ``"cpu"``, ``"cuda"`` or ``"mps"`` (runs on CPU); ``None``
-            follows ``Kanon.device``. ``"cuda"`` raises if CUDA is unavailable;
+            follows ``Config.device``. ``"cuda"`` raises if CUDA is unavailable;
             ``"auto"`` uses it when present.
         providers: Explicit ORT provider list; overrides `device`.
         conf_threshold, iou_threshold, max_detections: Detection filtering.
@@ -197,7 +197,7 @@ class OnnxAdapter(Mechane):
         if task not in ("detect", "classify"):
             raise ConfigurationError(f"OnnxAdapter task must be 'detect' or 'classify', not {task!r}")
         self.name = name
-        self.supported_praxeis = frozenset({Praxis.DETECT if task == "detect" else Praxis.CLASSIFY})
+        self.supported_tasks = frozenset({Task.DETECT if task == "detect" else Task.CLASSIFY})
         self._task = task
         self._model_path = Path(model_path)
         self._labels_path = labels_path
@@ -230,8 +230,8 @@ class OnnxAdapter(Mechane):
             return ["CPUExecutionProvider"]
         if device == "cuda" and "CUDAExecutionProvider" not in available:
             raise BackendUnavailableError(
-                "device='cuda' requested but CUDAExecutionProvider is unavailable "
-                "(install onnxruntime-gpu and a matching CUDA runtime)"
+                "device='cuda' requested but CUDAExecutionProvider is unavailable; "
+                "install onnxruntime-gpu and a matching CUDA runtime"
             )
         wanted = ["CUDAExecutionProvider", "CPUExecutionProvider"]
         return [p for p in wanted if p in available]
@@ -243,8 +243,7 @@ class OnnxAdapter(Mechane):
             import onnxruntime as ort
         except ImportError as exc:
             raise BackendUnavailableError(
-                "The 'onnxruntime' package is required for OnnxAdapter. "
-                "Install it with: pip install 'horasis[onnx]'"
+                "OnnxAdapter needs the onnxruntime package: pip install 'horasis[onnx]'"
             ) from exc
         if not self._model_path.is_file():
             raise BackendUnavailableError(f"ONNX model file not found: {self._model_path}")
@@ -275,17 +274,17 @@ class OnnxAdapter(Mechane):
     def _model_input_size(self, session: Any) -> tuple[int, int]:
         shape = session.get_inputs()[0].shape
         if len(shape) != 4 or shape[1] != 3:
-            raise ConfigurationError(f"Expected an NCHW image input (1, 3, H, W); model has {shape}")
+            raise ConfigurationError(f"expected an NCHW image input (1, 3, H, W), model has {shape}")
         h, w = shape[2], shape[3]
         if isinstance(h, int) and isinstance(w, int):
             return h, w
         return self._input_size
 
-    def infer(self, praxis: Praxis, image: Physis, **options: Any) -> Theoria:
-        if not self.supports(praxis):
+    def infer(self, task: Task, image: Image, **options: Any) -> Result:
+        if not self.supports(task):
             raise BackendUnavailableError(
-                f"OnnxAdapter {self.name!r} serves {sorted(p.value for p in self.supported_praxeis)}, "
-                f"not praxis {praxis.value!r}"
+                f"OnnxAdapter {self.name!r} serves {sorted(p.value for p in self.supported_tasks)}, "
+                f"not task {task.value!r}"
             )
         start = time.perf_counter()
         try:
@@ -301,14 +300,14 @@ class OnnxAdapter(Mechane):
             inp = session.get_inputs()[0]
             dtype = np.float16 if "float16" in str(getattr(inp, "type", "")) else np.float32
             outputs = session.run(None, {inp.name: tensor[None].astype(dtype)})
-            result: Theoria
+            result: Result
             if self._task == "detect":
                 result = self._decode_detect(
                     np.asarray(outputs[0], dtype=np.float32), scale, pad, rgb.size, options
                 )
             else:
                 result = self._decode_classify(np.asarray(outputs[0], dtype=np.float32), options)
-        except Sphalma:
+        except HorasisError:
             raise
         except Exception as exc:
             raise AdapterError(f"ONNX inference failed: {exc}") from exc
@@ -323,7 +322,7 @@ class OnnxAdapter(Mechane):
         top_k = int(options.get("top_k", self._top_k))
         idx = np.argsort(probs)[::-1][:top_k]
         entries = [
-            ClassificationEntry(label=self._label(int(i)), confidence=doxa(float(probs[i])))
+            ClassificationEntry(label=self._label(int(i)), confidence=to_confidence(float(probs[i])))
             for i in idx
         ]
         return ClassificationResult(backend=self.name, latency_ms=0.0, entries=entries)
@@ -392,7 +391,7 @@ class OnnxAdapter(Mechane):
             detections.append(
                 Detection(
                     label=self._label(int(class_id)),
-                    confidence=doxa(float(score)),
+                    confidence=to_confidence(float(score)),
                     box=BoundingBox(x_min=x1, y_min=y1, x_max=x2, y_max=y2),
                 )
             )

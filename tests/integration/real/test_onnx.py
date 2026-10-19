@@ -24,7 +24,7 @@ pytest.importorskip("onnxruntime", reason="needs onnxruntime (pip install 'horas
 
 
 def _model() -> tuple[Path, list[str]]:
-    """YOLO11n as ONNX: `$HORASIS_TEST_ONNX_MODEL`, else exported from the Ultralytics weights."""
+    """Return YOLO11n as ONNX: `$HORASIS_TEST_ONNX_MODEL`, else export the Ultralytics weights."""
     pytest.importorskip("ultralytics")
     from ultralytics import YOLO
 

@@ -16,21 +16,21 @@ from horasis.backend.onnx_adapter import (
     load_labels,
     nms,
 )
-from horasis.foundation.schemas import (
-    ClassificationResult,
-    DetectionResult,
-    Physis,
-    Praxis,
-)
-from horasis.foundation.sphalma import (
+from horasis.foundation.errors import (
     AdapterError,
     BackendUnavailableError,
     ConfigurationError,
 )
+from horasis.foundation.schemas import (
+    ClassificationResult,
+    DetectionResult,
+    Image,
+    Task,
+)
 from tests.conftest import png_bytes
 
 # A 128x64 (WxH) image fed to a 64x64 model: scale 0.5, pad_x 0, pad_y 16.
-IMAGE = Physis.from_bytes(png_bytes(128, 64))
+IMAGE = Image.from_bytes(png_bytes(128, 64))
 
 
 class FakeSession:
@@ -64,9 +64,9 @@ def _adapter(output: np.ndarray, **kwargs: Any) -> OnnxAdapter:
 
 
 def test_letterbox_geometry() -> None:
-    from PIL import Image
+    from PIL import Image as PILImage
 
-    tensor, scale, pad = letterbox(Image.new("RGB", (128, 64), (255, 255, 255)), (64, 64))
+    tensor, scale, pad = letterbox(PILImage.new("RGB", (128, 64), (255, 255, 255)), (64, 64))
     assert tensor.shape == (3, 64, 64) and tensor.dtype == np.float32
     assert scale == 0.5 and pad == (0.0, 16.0)
     assert tensor[0, 32, 32] == 1.0  # image area
@@ -74,9 +74,9 @@ def test_letterbox_geometry() -> None:
 
 
 def test_center_crop_resize_shape() -> None:
-    from PIL import Image
+    from PIL import Image as PILImage
 
-    assert center_crop_resize(Image.new("RGB", (100, 50)), (32, 32)).shape == (3, 32, 32)
+    assert center_crop_resize(PILImage.new("RGB", (100, 50)), (32, 32)).shape == (3, 32, 32)
 
 
 def test_nms_suppresses_overlaps_keeps_best() -> None:
@@ -94,7 +94,7 @@ def test_detect_decodes_yolov8_with_nms_and_unletterbox() -> None:
         ]
     )
     adapter = _adapter(out)
-    result = adapter.infer(Praxis.DETECT, IMAGE)
+    result = adapter.infer(Task.DETECT, IMAGE)
     assert isinstance(result, DetectionResult)
     assert [d.label for d in result.detections] == ["cat", "dog"]
     box = result.detections[0].box
@@ -111,7 +111,7 @@ def test_detect_clips_boxes_to_image_and_drops_empty() -> None:
             (-50, -50, 2, 2, [0.9, 0.0]),  # entirely outside: degenerate after clip
         ]
     )
-    result = _adapter(out).infer(Praxis.DETECT, IMAGE)
+    result = _adapter(out).infer(Task.DETECT, IMAGE)
     assert len(result.detections) == 1  # type: ignore[attr-defined]
     assert result.detections[0].box.x_min == 0  # type: ignore[attr-defined]
 
@@ -119,20 +119,19 @@ def test_detect_clips_boxes_to_image_and_drops_empty() -> None:
 def test_detect_threshold_and_max_detections_options() -> None:
     out = _yolov8_output([(10 + 20 * i, 32, 8, 8, [0.5 + i / 100, 0.0]) for i in range(3)])
     adapter = _adapter(out, max_detections=2)
-    assert len(adapter.infer(Praxis.DETECT, IMAGE).detections) == 2  # type: ignore[attr-defined]
-    strict = adapter.infer(Praxis.DETECT, IMAGE, conf_threshold=0.515)
+    assert len(adapter.infer(Task.DETECT, IMAGE).detections) == 2  # type: ignore[attr-defined]
+    strict = adapter.infer(Task.DETECT, IMAGE, conf_threshold=0.515)
     assert len(strict.detections) == 1  # type: ignore[attr-defined]
 
 
 def test_detect_yolov5_and_end_to_end_layouts() -> None:
     # YOLOv5: (1, N, 5+nc) with objectness; score = obj * class score.
     v5 = np.array([[[32, 32, 32, 16, 0.5, 0.0, 1.0], [5, 5, 2, 2, 0.1, 1.0, 0.0]]], dtype=np.float32)
-    result = _adapter(v5, output_format="yolov5").infer(Praxis.DETECT, IMAGE)
+    result = _adapter(v5, output_format="yolov5").infer(Task.DETECT, IMAGE)
     assert [(d.label, round(float(d.confidence), 2)) for d in result.detections] == [("dog", 0.5)]  # type: ignore[attr-defined]
-    # auto-detected as v5: N rows (2) < C... but rows > cols check uses shape[0] < shape[1]
     # End-to-end (1, N, 6): [x1, y1, x2, y2, score, cls] in letterboxed space.
     e2e = np.array([[[16, 24, 48, 40, 0.9, 1.0], [0, 0, 5, 5, 0.1, 0.0]]], dtype=np.float32)
-    result = _adapter(e2e, output_format="nms").infer(Praxis.DETECT, IMAGE)
+    result = _adapter(e2e, output_format="nms").infer(Task.DETECT, IMAGE)
     (det,) = result.detections  # type: ignore[attr-defined]
     assert det.label == "dog" and (det.box.x_min, det.box.x_max) == (32, 96)
 
@@ -141,16 +140,16 @@ def test_auto_format_uses_class_count_then_shape() -> None:
     cols = [(32, 32, 32, 16, [0.9, 0.0])]
     few = _yolov8_output(cols)  # (1, 6, 1): fewer anchors than channels
     sized = _adapter(few, output_format="auto")  # 2 labels -> 4 + 2 == 6 channels
-    assert [d.label for d in sized.infer(Praxis.DETECT, IMAGE).detections] == ["cat"]  # type: ignore[attr-defined]
+    assert [d.label for d in sized.infer(Task.DETECT, IMAGE).detections] == ["cat"]  # type: ignore[attr-defined]
     many = np.zeros((1, 85, 2000), dtype=np.float32)  # no labels: longer axis wins
     unlabeled = OnnxAdapter(model_path="m.onnx", session=FakeSession(many), labels=[])
-    assert unlabeled.infer(Praxis.DETECT, IMAGE).detections == []  # type: ignore[attr-defined]
+    assert unlabeled.infer(Task.DETECT, IMAGE).detections == []  # type: ignore[attr-defined]
 
 
 def test_auto_format_picks_nms_for_six_column_rows() -> None:
     rows = np.zeros((1, 300, 6), dtype=np.float32)
     rows[0, 0] = [16, 24, 48, 40, 0.9, 0]
-    result = _adapter(rows, output_format="auto").infer(Praxis.DETECT, IMAGE)
+    result = _adapter(rows, output_format="auto").infer(Task.DETECT, IMAGE)
     assert [d.label for d in result.detections] == ["cat"]  # type: ignore[attr-defined]
 
 
@@ -162,7 +161,7 @@ def test_classify_applies_softmax_and_imagenet_norm() -> None:
         session=FakeSession(np.array([[1.0, 3.0, 2.0]], dtype=np.float32), [1, 3, 32, 32]),
         top_k=2,
     )
-    result = adapter.infer(Praxis.CLASSIFY, IMAGE)
+    result = adapter.infer(Task.CLASSIFY, IMAGE)
     assert isinstance(result, ClassificationResult)
     assert [e.label for e in result.entries] == ["b", "c"]
     assert float(result.entries[0].confidence) == pytest.approx(0.6652, abs=1e-3)
@@ -178,14 +177,14 @@ def test_classify_keeps_existing_probabilities() -> None:
         labels=["a", "b"],
         session=FakeSession(np.array([[0.25, 0.75]], dtype=np.float32), [1, 3, 8, 8]),
     )
-    assert float(adapter.infer(Praxis.CLASSIFY, IMAGE).entries[0].confidence) == 0.75  # type: ignore[attr-defined]
+    assert float(adapter.infer(Task.CLASSIFY, IMAGE).entries[0].confidence) == 0.75  # type: ignore[attr-defined]
 
 
-def test_task_scopes_supported_praxeis() -> None:
+def test_task_scopes_supported_tasks() -> None:
     det = _adapter(np.zeros((1, 6, 4), dtype=np.float32))
-    assert det.supports(Praxis.DETECT) and not det.supports(Praxis.CLASSIFY)
+    assert det.supports(Task.DETECT) and not det.supports(Task.CLASSIFY)
     with pytest.raises(BackendUnavailableError):
-        det.infer(Praxis.CLASSIFY, IMAGE)
+        det.infer(Task.CLASSIFY, IMAGE)
     with pytest.raises(ConfigurationError):
         OnnxAdapter(model_path="x.onnx", task="segment")  # type: ignore[arg-type]
 
@@ -195,7 +194,7 @@ def test_dynamic_input_uses_configured_size() -> None:
     OnnxAdapter(
         model_path="m.onnx", session=session, input_size=(48, 96), output_format="yolov8"
     ).infer(
-        Praxis.DETECT, IMAGE
+        Task.DETECT, IMAGE
     )
     assert session.feeds["images"].shape == (1, 3, 48, 96)
 
@@ -203,7 +202,7 @@ def test_dynamic_input_uses_configured_size() -> None:
 def test_non_nchw_model_is_a_configuration_error() -> None:
     session = FakeSession(np.zeros((1, 6, 4), dtype=np.float32), [1, 64, 64, 3])
     with pytest.raises(ConfigurationError, match="NCHW"):
-        OnnxAdapter(model_path="m.onnx", session=session).infer(Praxis.DETECT, IMAGE)
+        OnnxAdapter(model_path="m.onnx", session=session).infer(Task.DETECT, IMAGE)
 
 
 def test_runtime_failures_are_wrapped() -> None:
@@ -212,10 +211,10 @@ def test_runtime_failures_are_wrapped() -> None:
             raise RuntimeError("ort exploded")
 
     with pytest.raises(AdapterError, match="ort exploded"):
-        OnnxAdapter(model_path="m.onnx", session=Broken(np.zeros(1))).infer(Praxis.DETECT, IMAGE)
+        OnnxAdapter(model_path="m.onnx", session=Broken(np.zeros(1))).infer(Task.DETECT, IMAGE)
 
 
-# ---- labels sidecar --------------------------------------------------------
+# Labels sidecar
 
 
 def test_labels_txt_sidecar_discovered(tmp_path: Path) -> None:
@@ -245,10 +244,10 @@ def test_adapter_uses_sidecar_and_falls_back_to_ids(tmp_path: Path) -> None:
     (tmp_path / "m.labels.txt").write_text("cat\n", encoding="utf-8")
     out = _yolov8_output([(32, 32, 32, 16, [0.9, 0.0]), (32, 32, 8, 8, [0.0, 0.8])])
     adapter = OnnxAdapter(model_path=model, session=FakeSession(out), output_format="yolov8")
-    assert [d.label for d in adapter.infer(Praxis.DETECT, IMAGE).detections] == ["cat", "1"]  # type: ignore[attr-defined]
+    assert [d.label for d in adapter.infer(Task.DETECT, IMAGE).detections] == ["cat", "1"]  # type: ignore[attr-defined]
 
 
-# ---- providers / session creation -----------------------------------------
+# Providers and session creation
 
 
 @pytest.fixture

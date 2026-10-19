@@ -11,15 +11,15 @@ from __future__ import annotations
 
 import os
 
-from horasis import InMemoryApiKeyValidator, Klimax, Skopos
+from horasis import InMemoryApiKeyValidator, Tier, Client
 
 
 def build_app(api_key):
     from horasis.server import create_app
 
     validator = InMemoryApiKeyValidator()
-    validator.register_simple(api_key, principal_id="http-client", tier=Klimax.PRO)
-    return create_app(Skopos.build(validator=validator))
+    validator.register_simple(api_key, principal_id="http-client", tier=Tier.PRO)
+    return create_app(Client.build(validator=validator))
 
 
 if __name__ == "__main__":

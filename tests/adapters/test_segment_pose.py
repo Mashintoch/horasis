@@ -5,24 +5,24 @@ from typing import Any
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image as PILImage
 
-from horasis import Skopos
+from horasis import Client
 from horasis.access.keys import InMemoryApiKeyValidator
-from horasis.access.klimax import Klimax
-from horasis.backend.taxis import Taxis
+from horasis.access.tiers import Tier
+from horasis.backend.registry import BackendRegistry
 from horasis.backend.ultralytics_adapter import UltralyticsAdapter
-from horasis.foundation.kanon import Kanon, QuotaRule, TierRule
+from horasis.foundation.config import Config, QuotaRule, TierRule
 from horasis.foundation.schemas import (
     COCO_KEYPOINTS,
-    Physis,
+    Image,
     PoseResult,
-    Praxis,
     SegmentationResult,
+    Task,
 )
-from tests.conftest import FakeMechane, png_bytes
+from tests.conftest import FakeBackend, png_bytes
 
-IMAGE = Physis.from_bytes(png_bytes(100, 80))
+IMAGE = Image.from_bytes(png_bytes(100, 80))
 
 
 def _box(cls: int, conf: float, xyxy: list[float]) -> Any:
@@ -57,10 +57,10 @@ def test_segmentation_returns_boxes_and_polygons(monkeypatch: pytest.MonkeyPatch
     )
     adapter = UltralyticsAdapter()
     loaded, calls = _install_fake_yolo(monkeypatch, adapter, raw)
-    result = adapter.infer(Praxis.SEGMENT, IMAGE, conf=0.4)
+    result = adapter.infer(Task.SEGMENT, IMAGE, conf=0.4)
     assert isinstance(result, SegmentationResult)
     assert loaded == ["yolo11n-seg.pt"]
-    assert isinstance(calls[0]["source"], Image.Image) and calls[0]["conf"] == 0.4
+    assert isinstance(calls[0]["source"], PILImage.Image) and calls[0]["conf"] == 0.4
     person, dog = result.segments
     assert person.label == "person" and len(person.polygon) == 3
     assert dog.polygon[2] == (90.0, 60.0) and dog.box.x_max == 90
@@ -71,8 +71,8 @@ def test_segmentation_without_masks_and_model_is_cached(monkeypatch: pytest.Monk
     raw = SimpleNamespace(names={}, boxes=[], masks=None)
     adapter = UltralyticsAdapter(segment_model="custom-seg.pt")
     loaded, _ = _install_fake_yolo(monkeypatch, adapter, raw)
-    assert adapter.infer(Praxis.SEGMENT, IMAGE).segments == []  # type: ignore[attr-defined]
-    adapter.infer(Praxis.SEGMENT, IMAGE)
+    assert adapter.infer(Task.SEGMENT, IMAGE).segments == []  # type: ignore[attr-defined]
+    adapter.infer(Task.SEGMENT, IMAGE)
     assert loaded == ["custom-seg.pt"]
     assert adapter.is_loaded()
     adapter.unload()
@@ -90,7 +90,7 @@ def test_pose_returns_named_coco_keypoints(monkeypatch: pytest.MonkeyPatch) -> N
     )
     adapter = UltralyticsAdapter()
     loaded, _ = _install_fake_yolo(monkeypatch, adapter, raw)
-    result = adapter.infer(Praxis.POSE, IMAGE)
+    result = adapter.infer(Task.POSE, IMAGE)
     assert isinstance(result, PoseResult) and loaded == ["yolo11n-pose.pt"]
     (person,) = result.poses
     assert [k.name for k in person.keypoints] == list(COCO_KEYPOINTS)
@@ -106,24 +106,24 @@ def test_pose_with_unusual_keypoint_count_and_no_keypoints(monkeypatch: pytest.M
     )
     adapter = UltralyticsAdapter()
     _install_fake_yolo(monkeypatch, adapter, raw)
-    pose = adapter.infer(Praxis.POSE, IMAGE).poses[0]  # type: ignore[attr-defined]
+    pose = adapter.infer(Task.POSE, IMAGE).poses[0]  # type: ignore[attr-defined]
     assert pose.keypoints[3].name == "kp3" and float(pose.keypoints[3].confidence) == 1.0
     empty = SimpleNamespace(names={0: "p"}, boxes=[_box(0, 0.9, [0, 0, 5, 5])], keypoints=None)
     adapter2 = UltralyticsAdapter()
     _install_fake_yolo(monkeypatch, adapter2, empty)
-    assert adapter2.infer(Praxis.POSE, IMAGE).poses[0].keypoints == []  # type: ignore[attr-defined]
+    assert adapter2.infer(Task.POSE, IMAGE).poses[0].keypoints == []  # type: ignore[attr-defined]
 
 
-def test_new_praxeis_declared() -> None:
+def test_new_tasks_declared() -> None:
     adapter = UltralyticsAdapter()
-    assert adapter.supports(Praxis.SEGMENT) and adapter.supports(Praxis.POSE)
-    assert not adapter.supports_video(Praxis.SEGMENT)
+    assert adapter.supports(Task.SEGMENT) and adapter.supports(Task.POSE)
+    assert not adapter.supports_video(Task.SEGMENT)
 
 
 def test_draw_segmentation_and_pose() -> None:
     from horasis.foundation.schemas import (
         BoundingBox,
-        Doxa,
+        Confidence,
         Keypoint,
         Pose,
         Segment,
@@ -134,48 +134,48 @@ def test_draw_segmentation_and_pose() -> None:
         backend="b",
         latency_ms=0,
         segments=[
-            Segment(label="a", confidence=Doxa(value=0.9), box=box, polygon=[(5, 5), (40, 5), (20, 40)]),
-            Segment(label="b", confidence=Doxa(value=0.9), box=box),  # no polygon: box fallback
+            Segment(label="a", confidence=Confidence(value=0.9), box=box, polygon=[(5, 5), (40, 5), (20, 40)]),
+            Segment(label="b", confidence=Confidence(value=0.9), box=box),  # no polygon: box fallback
         ],
     )
-    blank = Image.new("RGB", (50, 50))
+    blank = PILImage.new("RGB", (50, 50))
     assert np.asarray(seg.draw(blank)).sum() > 0
     kps = [
-        Keypoint(name=n, x=5 + i, y=5 + 2 * i, confidence=Doxa(value=0.9))
+        Keypoint(name=n, x=5 + i, y=5 + 2 * i, confidence=Confidence(value=0.9))
         for i, n in enumerate(COCO_KEYPOINTS)
     ]
     pose = PoseResult(
-        backend="b", latency_ms=0, poses=[Pose(label="person", confidence=Doxa(value=0.9), box=box, keypoints=kps)]
+        backend="b", latency_ms=0, poses=[Pose(label="person", confidence=Confidence(value=0.9), box=box, keypoints=kps)]
     )
     assert np.asarray(pose.draw(blank)).sum() > 0
     assert np.asarray(blank).sum() == 0
 
 
-def _client(backend: FakeMechane, **kw: Any) -> Skopos:
-    kanon = Kanon(
+def _client(backend: FakeBackend, **kw: Any) -> Client:
+    config = Config(
         default_backend=backend.name,
         tiers={"pro": TierRule(name="pro", quota=QuotaRule(limit=50, window_seconds=60))},
     )
     validator = InMemoryApiKeyValidator()
-    validator.register_simple("k", principal_id="u", tier=Klimax.PRO)
-    taxis = Taxis()
-    taxis.register(backend)
-    return Skopos(kanon=kanon, taxis=taxis, validator=validator, **kw)
+    validator.register_simple("k", principal_id="u", tier=Tier.PRO)
+    registry = BackendRegistry()
+    registry.register(backend)
+    return Client(config=config, registry=registry, validator=validator, **kw)
 
 
 def test_public_api_for_segmentation_and_pose_with_options_passthrough() -> None:
     seen: dict[str, Any] = {}
 
-    class Recorder(FakeMechane):
-        def infer(self, praxis: Praxis, image: Physis, **options: object) -> Any:
-            seen[praxis.value] = options
-            if praxis is Praxis.SEGMENT:
+    class Recorder(FakeBackend):
+        def infer(self, task: Task, image: Image, **options: object) -> Any:
+            seen[task.value] = options
+            if task is Task.SEGMENT:
                 return SegmentationResult(backend=self.name, latency_ms=0)
-            if praxis is Praxis.POSE:
+            if task is Task.POSE:
                 return PoseResult(backend=self.name, latency_ms=0)
-            return super().infer(praxis, image, **options)
+            return super().infer(task, image, **options)
 
-    client = _client(Recorder("rec", frozenset(Praxis)))
+    client = _client(Recorder("rec", frozenset(Task)))
     assert isinstance(
         client.segmentation.segment(png_bytes(), api_key="k", options={"conf": 0.7}),
         SegmentationResult,
@@ -191,7 +191,7 @@ def test_public_api_for_segmentation_and_pose_with_options_passthrough() -> None
     assert client.pose.estimate_batch([png_bytes()], api_key="k")[0].ok
 
 
-def test_default_costs_and_tiers_cover_new_praxeis() -> None:
-    kanon = Kanon.default()
-    assert kanon.cost_for("segment") == 2 and kanon.cost_for("pose") == 2
-    assert "segment" in kanon.tier("pro").allowed_praxeis
+def test_default_costs_and_tiers_cover_new_tasks() -> None:
+    config = Config.default()
+    assert config.cost_for("segment") == 2 and config.cost_for("pose") == 2
+    assert "segment" in config.tier("pro").allowed_tasks

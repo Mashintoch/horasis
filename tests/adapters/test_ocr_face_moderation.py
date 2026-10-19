@@ -10,21 +10,21 @@ from horasis.backend._common import order_into_lines
 from horasis.backend.easyocr_adapter import EasyOCRAdapter
 from horasis.backend.face_adapter import MODEL_ENV_VAR, YuNetFaceAdapter
 from horasis.backend.moderation_adapter import TransformersModerationAdapter
-from horasis.backend.taxis import Taxis
-from horasis.foundation.kanon import Kanon
+from horasis.backend.registry import BackendRegistry
+from horasis.foundation.config import Config
+from horasis.foundation.errors import AdapterError, BackendUnavailableError
 from horasis.foundation.schemas import (
     BoundingBox,
     FaceResult,
+    Image,
     ModerationResult,
     OcrResult,
-    Physis,
-    Praxis,
+    Task,
 )
-from horasis.foundation.sphalma import AdapterError, BackendUnavailableError
-from horasis.orchestration.organon import Organon
+from horasis.orchestration.pipeline import Pipeline
 from tests.conftest import png_bytes
 
-IMAGE = Physis.from_bytes(png_bytes(100, 60))
+IMAGE = Image.from_bytes(png_bytes(100, 60))
 
 
 def _quad(x: float, y: float, w: float = 30, h: float = 10) -> list[list[float]]:
@@ -41,10 +41,10 @@ class FakeReader:
         return self.rows
 
 
-# ---- OCR -------------------------------------------------------------------
+# OCR
 
 
-def test_easyocr_returns_glyphs_with_polygon_and_lines() -> None:
+def test_easyocr_returns_regions_with_polygon_and_lines() -> None:
     reader = FakeReader(
         [
             (_quad(60, 40), "world", 0.8),  # second line, listed first
@@ -53,12 +53,12 @@ def test_easyocr_returns_glyphs_with_polygon_and_lines() -> None:
             (_quad(5, 5), "   ", 0.99),  # blank: dropped
         ]
     )
-    result = EasyOCRAdapter(reader=reader).infer(Praxis.OCR, IMAGE)
+    result = EasyOCRAdapter(reader=reader).infer(Task.OCR, IMAGE)
     assert isinstance(result, OcrResult)
     assert result.backend == "easyocr"
-    assert [g.text for g in result.glyphs] == ["Oh", "Hello", "world"]
-    assert [g.line_index for g in result.glyphs] == [0, 0, 1]
-    first = result.glyphs[0]
+    assert [g.text for g in result.regions] == ["Oh", "Hello", "world"]
+    assert [g.line_index for g in result.regions] == [0, 0, 1]
+    first = result.regions[0]
     assert first.polygon == [(10.0, 6.0), (40.0, 6.0), (40.0, 16.0), (10.0, 16.0)]
     assert first.box == BoundingBox(x_min=10, y_min=6, x_max=40, y_max=16)
     assert [line.text for line in result.lines] == ["Oh Hello", "world"]
@@ -68,26 +68,26 @@ def test_easyocr_returns_glyphs_with_polygon_and_lines() -> None:
 
 def test_easyocr_min_confidence_and_clamping() -> None:
     reader = FakeReader([(_quad(0, 0), "low", 0.1), (_quad(0, 20), "ok", 1.0000001)])
-    result = EasyOCRAdapter(reader=reader, min_confidence=0.5).infer(Praxis.OCR, IMAGE)
-    assert [g.text for g in result.glyphs] == ["ok"]
-    assert float(result.glyphs[0].confidence) == 1.0
+    result = EasyOCRAdapter(reader=reader, min_confidence=0.5).infer(Task.OCR, IMAGE)
+    assert [g.text for g in result.regions] == ["ok"]
+    assert float(result.regions[0].confidence) == 1.0
 
 
-def test_easyocr_wraps_engine_failures_and_rejects_other_praxeis() -> None:
+def test_easyocr_wraps_engine_failures_and_rejects_other_tasks() -> None:
     class Boom:
         def readtext(self, image: Any) -> None:
             raise RuntimeError("kaboom")
 
     with pytest.raises(AdapterError, match="kaboom"):
-        EasyOCRAdapter(reader=Boom()).infer(Praxis.OCR, IMAGE)
+        EasyOCRAdapter(reader=Boom()).infer(Task.OCR, IMAGE)
     with pytest.raises(BackendUnavailableError):
-        EasyOCRAdapter(reader=FakeReader([])).infer(Praxis.DETECT, IMAGE)
+        EasyOCRAdapter(reader=FakeReader([])).infer(Task.DETECT, IMAGE)
 
 
 def test_easyocr_missing_dependency_is_backend_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(__import__("sys").modules, "easyocr", None)
     with pytest.raises(BackendUnavailableError, match="horasis\\[ocr\\]"):
-        EasyOCRAdapter().infer(Praxis.OCR, IMAGE)
+        EasyOCRAdapter().infer(Task.OCR, IMAGE)
 
 
 def test_tesseract_adapter_maps_words_and_native_lines() -> None:
@@ -105,11 +105,11 @@ def test_tesseract_adapter_maps_words_and_native_lines() -> None:
         "height": [0, 10, 10, 10, 0],
     }
     engine = SimpleNamespace(image_to_data=lambda img, lang, output_type: data)
-    result = TesseractAdapter(engine=engine).infer(Praxis.OCR, IMAGE)
-    assert [g.text for g in result.glyphs] == ["Hello", "there", "bye"]
-    assert [g.line_index for g in result.glyphs] == [0, 0, 1]
-    assert float(result.glyphs[0].confidence) == pytest.approx(0.965)
-    assert result.glyphs[0].polygon is not None and len(result.glyphs[0].polygon) == 4
+    result = TesseractAdapter(engine=engine).infer(Task.OCR, IMAGE)
+    assert [g.text for g in result.regions] == ["Hello", "there", "bye"]
+    assert [g.line_index for g in result.regions] == [0, 0, 1]
+    assert float(result.regions[0].confidence) == pytest.approx(0.965)
+    assert result.regions[0].polygon is not None and len(result.regions[0].polygon) == 4
     assert result.text == "Hello there\nbye"
 
 
@@ -123,7 +123,7 @@ def test_tesseract_missing_binary_is_backend_unavailable() -> None:
         raise TesseractNotFoundError("tesseract is not installed")
 
     with pytest.raises(BackendUnavailableError, match="binary"):
-        TesseractAdapter(engine=SimpleNamespace(image_to_data=boom)).infer(Praxis.OCR, IMAGE)
+        TesseractAdapter(engine=SimpleNamespace(image_to_data=boom)).infer(Task.OCR, IMAGE)
 
 
 def test_order_into_lines_handles_empty_and_single() -> None:
@@ -132,7 +132,7 @@ def test_order_into_lines_handles_empty_and_single() -> None:
     assert order_into_lines([box], lambda b: b) == [(0, box)]
 
 
-# ---- Faces -----------------------------------------------------------------
+# Faces
 
 
 class FakeYuNet:
@@ -156,7 +156,7 @@ def _row(x: float, y: float, w: float, h: float, score: float) -> list[float]:
 
 def test_face_adapter_returns_boxes_landmarks_and_sets_input_size() -> None:
     det = FakeYuNet(np.array([_row(10, 12, 20, 24, 0.93)], dtype=np.float32))
-    result = YuNetFaceAdapter(detector=det).infer(Praxis.FACE, IMAGE)
+    result = YuNetFaceAdapter(detector=det).infer(Task.FACE, IMAGE)
     assert isinstance(result, FaceResult)
     assert det.input_size == (100, 60)
     (face,) = result.faces
@@ -170,27 +170,27 @@ def test_face_adapter_returns_boxes_landmarks_and_sets_input_size() -> None:
 
 def test_face_adapter_passes_bgr_to_opencv() -> None:
     det = FakeYuNet(None)
-    rgb_red = Physis.from_bytes(png_bytes(4, 4, color=(255, 0, 0)))
-    YuNetFaceAdapter(detector=det).infer(Praxis.FACE, rgb_red)
+    rgb_red = Image.from_bytes(png_bytes(4, 4, color=(255, 0, 0)))
+    YuNetFaceAdapter(detector=det).infer(Task.FACE, rgb_red)
     assert tuple(det.seen[0, 0]) == (0, 0, 255)  # BGR order
 
 
 def test_face_adapter_no_faces_and_optional_landmarks() -> None:
-    assert YuNetFaceAdapter(detector=FakeYuNet(None)).infer(Praxis.FACE, IMAGE).faces == []
+    assert YuNetFaceAdapter(detector=FakeYuNet(None)).infer(Task.FACE, IMAGE).faces == []
     det = FakeYuNet(np.array([_row(1, 1, 5, 5, 0.9)], dtype=np.float32))
-    result = YuNetFaceAdapter(detector=det, landmarks=False).infer(Praxis.FACE, IMAGE)
+    result = YuNetFaceAdapter(detector=det, landmarks=False).infer(Task.FACE, IMAGE)
     assert result.faces[0].landmarks is None
 
 
 def test_face_adapter_missing_model_is_actionable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(MODEL_ENV_VAR, raising=False)
     with pytest.raises(BackendUnavailableError, match="YuNet"):
-        YuNetFaceAdapter().infer(Praxis.FACE, IMAGE)
+        YuNetFaceAdapter().infer(Task.FACE, IMAGE)
     with pytest.raises(BackendUnavailableError, match="YuNet"):
-        YuNetFaceAdapter(model_path="/no/such/model.onnx").infer(Praxis.FACE, IMAGE)
+        YuNetFaceAdapter(model_path="/no/such/model.onnx").infer(Task.FACE, IMAGE)
 
 
-# ---- Moderation ------------------------------------------------------------
+# Moderation
 
 
 def _classifier(scores: dict[str, float]) -> Any:
@@ -202,12 +202,12 @@ def _classifier(scores: dict[str, float]) -> Any:
 
 def test_moderation_default_thresholds_and_safe_categories() -> None:
     adapter = TransformersModerationAdapter(classifier=_classifier({"normal": 0.97, "nsfw": 0.03}))
-    result = adapter.infer(Praxis.MODERATE, IMAGE)
+    result = adapter.infer(Task.MODERATE, IMAGE)
     assert isinstance(result, ModerationResult)
     assert not result.is_flagged
     flagged = TransformersModerationAdapter(
         classifier=_classifier({"normal": 0.2, "nsfw": 0.8})
-    ).infer(Praxis.MODERATE, IMAGE)
+    ).infer(Task.MODERATE, IMAGE)
     assert flagged.is_flagged
     assert {lb.category: lb.flagged for lb in flagged.labels} == {"normal": False, "nsfw": True}
 
@@ -216,23 +216,23 @@ def test_moderation_threshold_callable_is_used_standalone() -> None:
     adapter = TransformersModerationAdapter(
         classifier=_classifier({"nsfw": 0.6}), threshold_for=lambda c: 0.9
     )
-    assert not adapter.infer(Praxis.MODERATE, IMAGE).is_flagged  # type: ignore[attr-defined]
+    assert not adapter.infer(Task.MODERATE, IMAGE).is_flagged  # type: ignore[attr-defined]
 
 
-def test_kanon_thresholds_are_authoritative_through_organon() -> None:
+def test_config_thresholds_are_authoritative_through_pipeline() -> None:
     backend = TransformersModerationAdapter(classifier=_classifier({"normal": 0.3, "nsfw": 0.7}))
-    taxis = Taxis()
-    taxis.register(backend)
+    registry = BackendRegistry()
+    registry.register(backend)
 
-    def flagged_with(kanon: Kanon) -> dict[str, bool]:
-        organon = Organon(kanon=kanon, taxis=taxis)
-        result = organon.run(Praxis.MODERATE, IMAGE)
+    def flagged_with(config: Config) -> dict[str, bool]:
+        pipeline = Pipeline(config=config, registry=registry)
+        result = pipeline.run(Task.MODERATE, IMAGE)
         assert isinstance(result, ModerationResult)
         return {lb.category: lb.flagged for lb in result.labels}
 
-    strict = Kanon(default_backend="moderation", moderation_threshold=0.5)
-    lenient = Kanon(default_backend="moderation", moderation_thresholds={"nsfw": 0.9})
-    no_safe_list = Kanon(
+    strict = Config(default_backend="moderation", moderation_threshold=0.5)
+    lenient = Config(default_backend="moderation", moderation_thresholds={"nsfw": 0.9})
+    no_safe_list = Config(
         default_backend="moderation", moderation_safe_categories=[], moderation_threshold=0.2
     )
     assert flagged_with(strict) == {"normal": False, "nsfw": True}
@@ -245,12 +245,12 @@ def test_moderation_errors() -> None:
         raise RuntimeError("model exploded")
 
     with pytest.raises(AdapterError, match="exploded"):
-        TransformersModerationAdapter(classifier=boom).infer(Praxis.MODERATE, IMAGE)
+        TransformersModerationAdapter(classifier=boom).infer(Task.MODERATE, IMAGE)
     with pytest.raises(BackendUnavailableError):
-        TransformersModerationAdapter(classifier=boom).infer(Praxis.OCR, IMAGE)
+        TransformersModerationAdapter(classifier=boom).infer(Task.OCR, IMAGE)
 
 
 def test_moderation_missing_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(__import__("sys").modules, "transformers", None)
     with pytest.raises(BackendUnavailableError, match="horasis\\[moderation\\]"):
-        TransformersModerationAdapter().infer(Praxis.MODERATE, IMAGE)
+        TransformersModerationAdapter().infer(Task.MODERATE, IMAGE)

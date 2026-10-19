@@ -4,29 +4,29 @@ import threading
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 
-from horasis.backend.mechane import Mechane
-from horasis.foundation.schemas import Praxis
-from horasis.foundation.sphalma import (
+from horasis.backend.base import Backend
+from horasis.foundation.errors import (
     BackendUnavailableError,
     ConfigurationError,
     NoBackendError,
 )
+from horasis.foundation.schemas import Task
 
 
-class Taxis:
-    """Registry mapping backend names to :class:`Mechane` instances."""
+class BackendRegistry:
+    """Registry mapping backend names to :class:`Backend` instances."""
 
     def __init__(self) -> None:
-        self._backends: dict[str, Mechane] = {}
+        self._backends: dict[str, Backend] = {}
         self._lock = threading.Lock()
         self._recent: OrderedDict[str, None] = OrderedDict()
         self._device = "auto"
         self._auto_download = False
         self._max_loaded: int | None = None
 
-    def register(self, backend: Mechane) -> None:
+    def register(self, backend: Backend) -> None:
         if not backend.name:
-            raise ConfigurationError("Mechane.name must be a non-empty string")
+            raise ConfigurationError("Backend.name must be a non-empty string")
         backend.default_device = self._device
         backend.default_auto_download = self._auto_download
         self._backends[backend.name] = backend
@@ -42,7 +42,7 @@ class Taxis:
         max_loaded: int | None = None,
         auto_download_models: bool = False,
     ) -> None:
-        """Apply `Kanon.device` / `max_loaded_models` / `auto_download_models` to all backends."""
+        """Apply `Config.device`, `max_loaded_models` and `auto_download_models` to all backends."""
         self._device = device
         self._max_loaded = max_loaded
         self._auto_download = auto_download_models
@@ -50,7 +50,7 @@ class Taxis:
             backend.default_device = device
             backend.default_auto_download = auto_download_models
 
-    def touch(self, backend: Mechane) -> None:
+    def touch(self, backend: Backend) -> None:
         """Mark `backend` most recently used and unload LRU backends over the cap."""
         with self._lock:
             self._recent[backend.name] = None
@@ -67,57 +67,57 @@ class Taxis:
                 self._backends[name].unload()
                 loaded.remove(name)
 
-    def get(self, name: str) -> Mechane:
+    def get(self, name: str) -> Backend:
         try:
             return self._backends[name]
         except KeyError as exc:
-            raise BackendUnavailableError(f"No backend registered as {name!r}") from exc
+            raise BackendUnavailableError(f"no backend registered as {name!r}") from exc
 
     def names(self) -> list[str]:
         return list(self._backends)
 
     def resolve(
         self,
-        praxis: Praxis,
+        task: Task,
         *,
         preferred: str | None,
         default: str,
         order: Sequence[str] = (),
         fallback: Sequence[str] = (),
-    ) -> Mechane:
-        """Pick the backend to use for `praxis` on image input.
+    ) -> Backend:
+        """Pick the backend to use for `task` on image input.
 
         Resolution order:
-            1. `preferred`, if given, must exist and support `praxis`.
-            2. `order` (typically `Kanon.backend_order[praxis]`): the first
-               registered backend listed there that supports `praxis`.
-            3. `default` (typically `Kanon.default_backend`), if it supports `praxis`.
-            4. `fallback` (typically `Kanon.fallback_order`), first match.
-            5. The first registered backend that supports `praxis`.
+            1. `preferred`, if given, must exist and support `task`.
+            2. `order` (typically `Config.backend_order[task]`): the first
+               registered backend listed there that supports `task`.
+            3. `default` (typically `Config.default_backend`), if it supports `task`.
+            4. `fallback` (typically `Config.fallback_order`), first match.
+            5. The first registered backend that supports `task`.
 
         Raises:
             BackendUnavailableError: if no suitable backend can be found.
         """
         return self._resolve(
-            praxis,
+            task,
             preferred=preferred,
             default=default,
             order=order,
             fallback=fallback,
-            check=lambda b: b.supports(praxis),
+            check=lambda b: b.supports(task),
             kind="",
         )
 
     def resolve_video(
         self,
-        praxis: Praxis,
+        task: Task,
         *,
         preferred: str | None,
         default: str,
         order: Sequence[str] = (),
         fallback: Sequence[str] = (),
-    ) -> Mechane:
-        """Pick the backend to use for `praxis` on video (`Kinesis`) input.
+    ) -> Backend:
+        """Pick the backend to use for `task` on video input.
 
         Same resolution order as `resolve`, but checks `supports_video`
         instead of `supports`.
@@ -126,25 +126,25 @@ class Taxis:
             BackendUnavailableError: if no suitable backend can be found.
         """
         return self._resolve(
-            praxis,
+            task,
             preferred=preferred,
             default=default,
             order=order,
             fallback=fallback,
-            check=lambda b: b.supports_video(praxis),
+            check=lambda b: b.supports_video(task),
             kind="video ",
         )
 
     def resolve_video_annotate(
         self,
-        praxis: Praxis,
+        task: Task,
         *,
         preferred: str | None,
         default: str,
         order: Sequence[str] = (),
         fallback: Sequence[str] = (),
-    ) -> Mechane:
-        """Pick the backend to use for combined `praxis` video detect+annotate.
+    ) -> Backend:
+        """Pick the backend to use for `task` with combined video detect-and-annotate.
 
         Same resolution order as `resolve`, but checks
         `supports_video_annotate` instead of `supports`.
@@ -153,35 +153,34 @@ class Taxis:
             BackendUnavailableError: if no suitable backend can be found.
         """
         return self._resolve(
-            praxis,
+            task,
             preferred=preferred,
             default=default,
             order=order,
             fallback=fallback,
-            check=lambda b: b.supports_video_annotate(praxis),
+            check=lambda b: b.supports_video_annotate(task),
             kind="video-annotate ",
         )
 
     def _resolve(
         self,
-        praxis: Praxis,
+        task: Task,
         *,
         preferred: str | None,
         default: str,
         order: Sequence[str],
         fallback: Sequence[str],
-        check: Callable[[Mechane], bool],
+        check: Callable[[Backend], bool],
         kind: str,
-    ) -> Mechane:
+    ) -> Backend:
         if preferred is not None:
             backend = self.get(preferred)
             if not check(backend):
                 raise BackendUnavailableError(
-                    f"Backend {preferred!r} does not support {kind}praxis {praxis.value!r}"
+                    f"backend {preferred!r} does not support {kind}task {task.value!r}"
                 )
             return backend
 
-        # Config preference, then the default, then the fallback list, then anything.
         candidates = [*order, default, *fallback, *self._backends]
         considered: list[str] = []
         for name in dict.fromkeys(candidates):
@@ -194,9 +193,8 @@ class Taxis:
 
         registered = self.names()
         raise NoBackendError(
-            f"No registered backend supports {kind}praxis {praxis.value!r}. "
-            f"Registered backends: {registered or 'none'}. "
-            "Register one that supports it, or install the matching extra "
-            "(e.g. horasis[ocr], horasis[moderation]).",
-            context={"praxis": praxis.value, "registered": registered, "considered": considered},
+            f"no registered backend supports {kind}task {task.value!r}; "
+            f"registered: {registered or 'none'}; "
+            "register one or install the matching extra (e.g. horasis[ocr])",
+            context={"task": task.value, "registered": registered, "considered": considered},
         )

@@ -1,27 +1,24 @@
-"""Layer 5 -- Public API.
+"""Layer 5: `Client`, `AsyncClient` and the capability classes.
 
-The only layer external callers should import from directly. Small,
-explicit, and stable: it exposes `Skopos` and the five capability classes,
-and hides every backend, orchestration, and access-control detail behind
-them.
+The only layer applications should import from directly.
 """
 
-from horasis.api.async_skopos import AsyncSkopos
-from horasis.api.skopos import (
+from horasis.api.async_client import AsyncClient
+from horasis.api.client import (
+    Client,
     ContentModerator,
     FaceDetector,
     ImageClassifier,
     ObjectDetector,
-    Skopos,
     TextExtractor,
 )
 
 __all__ = [
-    "AsyncSkopos",
+    "AsyncClient",
+    "Client",
     "ContentModerator",
     "FaceDetector",
     "ImageClassifier",
     "ObjectDetector",
-    "Skopos",
     "TextExtractor",
 ]

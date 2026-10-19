@@ -81,10 +81,6 @@ dev = [
 [project.scripts]
 horasis = "horasis.cli:main"
 
-# Third-party plugins register backends in their own pyproject.toml, e.g.:
-# [project.entry-points."horasis.backends"]
-# my_backend = "my_package.adapter:MyAdapter"
-
 [tool.setuptools.dynamic]
 version = { attr = "horasis.__version__" }
 
@@ -139,7 +135,7 @@ ignore-paths = ["^tests/.*$", "^examples/.*$"]
 fail-under = 9.0
 
 [tool.pylint.typecheck]
-signature-mutators = ["horasis.access.limen.limen"]
+signature-mutators = ["horasis.access.guard.requires_access"]
 # cv2 builds its API at import time, so pylint cannot see its members.
 generated-members = ["cv2.*"]
 

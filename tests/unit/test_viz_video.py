@@ -1,5 +1,7 @@
-"""Tests for the viz helpers, video rendering, annotate() and the merged
-Ultralytics demographics/video code. Everything is faked: no models, no network."""
+"""Viz helpers, video rendering, annotate() and Ultralytics demographics and video.
+
+Everything is faked: no models, no network.
+"""
 
 from __future__ import annotations
 
@@ -10,30 +12,30 @@ from typing import Any, ClassVar
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image as PILImage
 
 from horasis import viz
 from horasis.access.keys import ApiKeyValidator
 from horasis.backend import ultralytics_adapter as ua
-from horasis.foundation.schemas import (
-    BoundingBox,
-    Detection,
-    DetectionResult,
-    Doxa,
-    Face,
-    FaceResult,
-    FrameDetections,
-    Glyph,
-    Kinesis,
-    OcrResult,
-    Physis,
-    Praxis,
-    VideoDetectionResult,
-)
-from horasis.foundation.sphalma import (
+from horasis.foundation.errors import (
     BackendUnavailableError,
     ValidationError,
     VisualizationUnavailableError,
+)
+from horasis.foundation.schemas import (
+    BoundingBox,
+    Confidence,
+    Detection,
+    DetectionResult,
+    Face,
+    FaceResult,
+    FrameDetections,
+    Image,
+    OcrResult,
+    Task,
+    TextRegion,
+    Video,
+    VideoDetectionResult,
 )
 from tests.conftest import png_bytes
 
@@ -41,11 +43,11 @@ BOX = BoundingBox(x_min=4, y_min=14, x_max=30, y_max=40)
 
 
 def det(label: str = "cat") -> Detection:
-    return Detection(label=label, confidence=Doxa(value=0.9), box=BOX)
+    return Detection(label=label, confidence=Confidence(value=0.9), box=BOX)
 
 
-def black() -> Image.Image:
-    return Image.new("RGB", (48, 48), (0, 0, 0))
+def black() -> PILImage.Image:
+    return PILImage.new("RGB", (48, 48), (0, 0, 0))
 
 
 class FakeWriter:
@@ -73,10 +75,10 @@ def avi_path(tmp_path: Path) -> Path:
     return path
 
 
-# ---- image drawing -----------------------------------------------------------------
+# Image drawing
 
 
-def _green(img: Image.Image) -> int:
+def _green(img: PILImage.Image) -> int:
     return int(np.asarray(img)[..., 1].astype(int).sum())
 
 
@@ -91,7 +93,7 @@ def test_text_color_is_used_for_ocr_labels() -> None:
     ocr = OcrResult(
         backend="b",
         latency_ms=0,
-        glyphs=[Glyph(text="HELLO", confidence=Doxa(value=0.9), box=BOX)],
+        regions=[TextRegion(text="HELLO", confidence=Confidence(value=0.9), box=BOX)],
     )
     red = viz.render_ocr(black(), ocr, box_color=(90, 0, 0), text_color=(255, 0, 0))
     green = viz.render_ocr(black(), ocr, box_color=(90, 0, 0), text_color=(0, 255, 0))
@@ -102,9 +104,9 @@ def test_render_detections_and_faces_save_and_return_image(tmp_path: Path) -> No
     out = tmp_path / "d" / "out.png"
     img = viz.render_detections(png_bytes(48, 48), DetectionResult(backend="b", latency_ms=0, detections=[det()]), output_path=out)
     assert out.is_file() and np.asarray(img).sum() > np.asarray(black()).sum()
-    faces = FaceResult(backend="b", latency_ms=0, faces=[Face(label="face", confidence=Doxa(value=0.8), box=BOX)])
+    faces = FaceResult(backend="b", latency_ms=0, faces=[Face(label="face", confidence=Confidence(value=0.8), box=BOX)])
     out2 = tmp_path / "faces.png"
-    viz.render_faces(Physis.from_bytes(png_bytes(48, 48)), faces, output_path=out2, show_labels=False)
+    viz.render_faces(Image.from_bytes(png_bytes(48, 48)), faces, output_path=out2, show_labels=False)
     assert out2.is_file()
 
 
@@ -127,7 +129,7 @@ def test_annotate_methods_delegate_and_save(tmp_path: Path) -> None:
     out = tmp_path / "a.png"
     annotated = result.annotate(png_bytes(48, 48), output_path=out, show_confidence=False)
     assert out.is_file() and annotated.size == (48, 48)
-    faces = FaceResult(backend="b", latency_ms=0, faces=[Face(label="face", confidence=Doxa(value=0.8), box=BOX)])
+    faces = FaceResult(backend="b", latency_ms=0, faces=[Face(label="face", confidence=Confidence(value=0.8), box=BOX)])
     out2 = tmp_path / "f.png"
     assert faces.annotate(png_bytes(48, 48), output_path=out2).size == (48, 48)
     assert out2.is_file()
@@ -138,7 +140,7 @@ def test_open_image_rejects_bad_input() -> None:
         viz._open_image(12345)
 
 
-# ---- video rendering --------------------------------------------------------------------
+# Video rendering
 
 
 def test_open_video_writer_picks_ffmpeg_only_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -177,7 +179,7 @@ def test_cv2_video_writer_wraps_opencv() -> None:
 
 def test_capture_source_variants(tmp_path: Path) -> None:
     assert viz._video_capture_source(tmp_path / "v.mp4") == (str(tmp_path / "v.mp4"), None)
-    assert viz._video_capture_source(Kinesis(source="u", url="http://x/v.mp4")) == ("http://x/v.mp4", None)
+    assert viz._video_capture_source(Video(source="u", url="http://x/v.mp4")) == ("http://x/v.mp4", None)
     source, temp = viz._video_capture_source(b"not really a video")
     try:
         assert temp == source and Path(source).read_bytes() == b"not really a video"
@@ -258,7 +260,7 @@ def test_api_key_validator_protocol_stub_is_abstract() -> None:
         ApiKeyValidator.validate(object(), "key")  # type: ignore[arg-type]
 
 
-# ---- merged Ultralytics code: demographics + video ---------------------------------------
+# Ultralytics demographics and video
 
 
 def _box(cls: int, conf: float, xyxy: list[float]) -> Any:
@@ -299,7 +301,7 @@ def test_demographics_attach_estimates_to_person_boxes_only(monkeypatch: pytest.
     monkeypatch.setattr(adapter, "_load_deepface", lambda: FakeDeepFace)
     FakeDeepFace.seen = []
     FakeDeepFace.result = [{"age": 31, "dominant_gender": "Man", "gender": {"Man": 91.0, "Woman": 9.0}}]
-    result = adapter.infer(Praxis.DETECT, Physis.from_bytes(png_bytes(32, 24)), estimate_demographics=True)
+    result = adapter.infer(Task.DETECT, Image.from_bytes(png_bytes(32, 24)), estimate_demographics=True)
     person, dog = result.detections  # type: ignore[attr-defined]
     assert person.face_estimate.estimated_age == 31
     assert person.face_estimate.estimated_gender == "Man"
@@ -333,12 +335,12 @@ def test_detect_video_samples_frames_and_cleans_temp_file(monkeypatch: pytest.Mo
         return iter([_raw([_box(0, 0.9, [1, 1, 9, 9])]), _raw([])])
 
     _install_yolo(monkeypatch, adapter, make)
-    result = adapter.infer_video(Praxis.DETECT, Kinesis.from_bytes(b"video-bytes"), sample_every_n_frames=5)
+    result = adapter.infer_video(Task.DETECT, Video.from_bytes(b"video-bytes"), sample_every_n_frames=5)
     assert [f.frame_index for f in result.frames] == [0, 5]  # type: ignore[attr-defined]
     assert result.frame_count == 2 and calls["vid_stride"] == 5  # type: ignore[attr-defined]
     assert not Path(calls["source"]).exists()  # temp file for raw bytes was removed
     with pytest.raises(BackendUnavailableError):
-        adapter.infer_video(Praxis.CLASSIFY, Kinesis.from_path("x.mp4"))
+        adapter.infer_video(Task.CLASSIFY, Video.from_path("x.mp4"))
 
 
 def test_detect_and_annotate_video_single_pass(
@@ -350,8 +352,8 @@ def test_detect_and_annotate_video_single_pass(
     frames = [_raw([_box(0, 0.9, [2, 2, 20, 20])]), _raw([_box(0, 0.9, [2, 2, 20, 20])]), _raw([]), _raw([])]
     _install_yolo(monkeypatch, adapter, lambda src, **kw: iter(frames))
     result, out = adapter.infer_video_and_annotate(
-        Praxis.DETECT,
-        Kinesis.from_path(avi_path),
+        Task.DETECT,
+        Video.from_path(avi_path),
         output_path=tmp_path / "o" / "out.mp4",
         sample_every_n_frames=2,
         text_color=(0, 255, 0),
@@ -362,4 +364,4 @@ def test_detect_and_annotate_video_single_pass(
     # frame 0 had detections and was drawn; frame 1 was skipped by sampling so it is untouched
     assert writer.frames[0].sum() > writer.frames[1].sum()
     with pytest.raises(BackendUnavailableError):
-        adapter.infer_video_and_annotate(Praxis.CLASSIFY, Kinesis.from_path(avi_path), output_path="x")
+        adapter.infer_video_and_annotate(Task.CLASSIFY, Video.from_path(avi_path), output_path="x")

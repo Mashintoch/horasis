@@ -12,33 +12,15 @@ from typing import Any
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image as PILImage
 
-from horasis import AsyncSkopos, Skopos
+from horasis import AsyncClient, Client
 from horasis.access.keys import InMemoryApiKeyValidator
-from horasis.access.klimax import Klimax
-from horasis.backend.taxis import Taxis
+from horasis.access.tiers import Tier
+from horasis.backend.registry import BackendRegistry
 from horasis.foundation import frames
-from horasis.foundation.aisthesis import OpenTelemetryAisthesis
-from horasis.foundation.frames import iter_frames
-from horasis.foundation.kanon import Kanon, QuotaRule, TierRule
-from horasis.foundation.schemas import (
-    BoundingBox,
-    ClassificationEntry,
-    ClassificationResult,
-    Detection,
-    DetectionResult,
-    Doxa,
-    FrameDetections,
-    Glyph,
-    ModerationLabel,
-    ModerationResult,
-    OcrResult,
-    Physis,
-    Praxis,
-    VideoDetectionResult,
-)
-from horasis.foundation.sphalma import (
+from horasis.foundation.config import Config, QuotaRule, TierRule
+from horasis.foundation.errors import (
     AdapterError,
     BackendUnavailableError,
     InvalidApiKeyError,
@@ -46,16 +28,34 @@ from horasis.foundation.sphalma import (
     QuotaExceededError,
     ValidationError,
 )
-from horasis.orchestration.hooks import LoggingHook, TimingHook
-from horasis.orchestration.kairos import Kairos, Moment
-from horasis.orchestration.organon import Organon
-from tests.conftest import FakeMechane, png_bytes
+from horasis.foundation.frames import iter_frames
+from horasis.foundation.schemas import (
+    BoundingBox,
+    ClassificationEntry,
+    ClassificationResult,
+    Confidence,
+    Detection,
+    DetectionResult,
+    FrameDetections,
+    Image,
+    ModerationLabel,
+    ModerationResult,
+    OcrResult,
+    Task,
+    TextRegion,
+    VideoDetectionResult,
+)
+from horasis.foundation.telemetry import OTelTelemetry
+from horasis.orchestration.builtin_hooks import LoggingHook, TimingHook
+from horasis.orchestration.hooks import HookEvent, Hooks
+from horasis.orchestration.pipeline import Pipeline
+from tests.conftest import FakeBackend, png_bytes
 
 
 def det(label: str, conf: float, x: float = 0) -> Detection:
     return Detection(
         label=label,
-        confidence=Doxa(value=conf),
+        confidence=Confidence(value=conf),
         box=BoundingBox(x_min=x, y_min=2, x_max=x + 6, y_max=8),
     )
 
@@ -64,7 +64,7 @@ def result_with(*dets: Detection) -> DetectionResult:
     return DetectionResult(backend="fake", latency_ms=1.0, detections=list(dets))
 
 
-# ---- result utilities ------------------------------------------------------
+# Result utilities
 
 
 def test_to_dict_and_to_json_round_trip() -> None:
@@ -89,21 +89,21 @@ def test_filter_other_result_types_and_video() -> None:
         backend="b",
         latency_ms=0,
         entries=[
-            ClassificationEntry(label="a", confidence=Doxa(value=0.9)),
-            ClassificationEntry(label="b", confidence=Doxa(value=0.1)),
+            ClassificationEntry(label="a", confidence=Confidence(value=0.9)),
+            ClassificationEntry(label="b", confidence=Confidence(value=0.1)),
         ],
     )
     assert [e.label for e in cls.filter(min_conf=0.5).entries] == ["a"]
     ocr = OcrResult(
         backend="b",
         latency_ms=0,
-        glyphs=[Glyph(text="hi", confidence=Doxa(value=0.9)), Glyph(text="x", confidence=Doxa(value=0.2))],
+        regions=[TextRegion(text="hi", confidence=Confidence(value=0.9)), TextRegion(text="x", confidence=Confidence(value=0.2))],
     )
-    assert [g.text for g in ocr.filter(labels=["hi"]).glyphs] == ["hi"]
+    assert [g.text for g in ocr.filter(labels=["hi"]).regions] == ["hi"]
     mod = ModerationResult(
         backend="b",
         latency_ms=0,
-        labels=[ModerationLabel(category="nsfw", confidence=Doxa(value=0.7), flagged=True)],
+        labels=[ModerationLabel(category="nsfw", confidence=Confidence(value=0.7), flagged=True)],
     )
     assert mod.filter(min_conf=0.8).labels == []
     video = VideoDetectionResult(
@@ -144,151 +144,151 @@ def test_video_coco_export() -> None:
 
 def test_draw_returns_image_without_saving(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    source = Image.new("RGB", (40, 30), (0, 0, 0))
+    source = PILImage.new("RGB", (40, 30), (0, 0, 0))
     drawn = result_with(det("cat", 0.9)).draw(source)
-    assert isinstance(drawn, Image.Image) and drawn.size == (40, 30)
+    assert isinstance(drawn, PILImage.Image) and drawn.size == (40, 30)
     assert np.asarray(drawn).sum() > 0  # something was drawn
     assert np.asarray(source).sum() == 0  # the input was not modified
     ocr = OcrResult(
         backend="b",
         latency_ms=0,
-        glyphs=[Glyph(text="hi", confidence=Doxa(value=0.9), polygon=[(1, 1), (20, 1), (20, 9), (1, 9)])],
+        regions=[TextRegion(text="hi", confidence=Confidence(value=0.9), polygon=[(1, 1), (20, 1), (20, 9), (1, 9)])],
     )
     assert np.asarray(ocr.draw(source)).sum() > 0
     cls = ClassificationResult(
-        backend="b", latency_ms=0, entries=[ClassificationEntry(label="a", confidence=Doxa(value=0.9))]
+        backend="b", latency_ms=0, entries=[ClassificationEntry(label="a", confidence=Confidence(value=0.9))]
     )
     assert np.asarray(cls.draw(source)).shape == (30, 40, 3)
     mod = ModerationResult(
         backend="b",
         latency_ms=0,
-        labels=[ModerationLabel(category="nsfw", confidence=Doxa(value=0.9), flagged=True)],
+        labels=[ModerationLabel(category="nsfw", confidence=Confidence(value=0.9), flagged=True)],
     )
-    assert isinstance(mod.draw(png_bytes()), Image.Image)
+    assert isinstance(mod.draw(png_bytes()), PILImage.Image)
     with pytest.raises(ValidationError):
         VideoDetectionResult(backend="b", latency_ms=0).draw(source)
     assert list(tmp_path.iterdir()) == []  # no annotated.png side effect
 
 
-# ---- Kairos hooks -----------------------------------------------------------
+# Hooks
 
 
-def _organon(backend: FakeMechane | None = None, kairos: Kairos | None = None) -> Organon:
-    taxis = Taxis()
-    taxis.register(backend or FakeMechane())
-    return Organon(kanon=Kanon(default_backend="fake"), taxis=taxis, kairos=kairos)
+def _pipeline(backend: FakeBackend | None = None, hooks: Hooks | None = None) -> Pipeline:
+    registry = BackendRegistry()
+    registry.register(backend or FakeBackend())
+    return Pipeline(config=Config(default_backend="fake"), registry=registry, hooks=hooks)
 
 
-IMG = Physis.from_bytes(png_bytes())
+IMG = Image.from_bytes(png_bytes())
 
 
 def test_hook_payloads_and_order() -> None:
-    kairos = Kairos()
-    seen: list[tuple[Moment, dict[str, Any]]] = []
-    for moment in Moment:
-        kairos.on(moment, lambda m=moment, **p: seen.append((m, p)))
-    _organon(kairos=kairos).run(Praxis.DETECT, IMG)
+    hooks = Hooks()
+    seen: list[tuple[HookEvent, dict[str, Any]]] = []
+    for event in HookEvent:
+        hooks.on(event, lambda m=event, **p: seen.append((m, p)))
+    _pipeline(hooks=hooks).run(Task.DETECT, IMG)
     assert [m for m, _ in seen] == [
-        Moment.BEFORE_RESOLVE,
-        Moment.AFTER_RESOLVE,
-        Moment.BEFORE_INFER,
-        Moment.AFTER_INFER,
+        HookEvent.BEFORE_RESOLVE,
+        HookEvent.AFTER_RESOLVE,
+        HookEvent.BEFORE_INFER,
+        HookEvent.AFTER_INFER,
     ]
-    assert seen[0][1] == {"praxis": Praxis.DETECT, "image": IMG}
+    assert seen[0][1] == {"task": Task.DETECT, "image": IMG}
     assert seen[1][1]["backend"].name == "fake"
     assert isinstance(seen[3][1]["result"], DetectionResult)
 
 
-class Exploding(FakeMechane):
-    def infer(self, praxis: Praxis, image: Physis, **options: object) -> Any:
+class Exploding(FakeBackend):
+    def infer(self, task: Task, image: Image, **options: object) -> Any:
         raise AdapterError("boom")
 
 
 def test_on_error_fires_for_backend_and_resolution_failures() -> None:
-    kairos = Kairos()
+    hooks = Hooks()
     errors: list[BaseException] = []
-    kairos.on(Moment.ON_ERROR, lambda **p: errors.append(p["error"]))
+    hooks.on(HookEvent.ON_ERROR, lambda **p: errors.append(p["error"]))
     with pytest.raises(AdapterError):
-        _organon(Exploding(), kairos).run(Praxis.DETECT, IMG)
+        _pipeline(Exploding(), hooks).run(Task.DETECT, IMG)
     with pytest.raises(BackendUnavailableError):
-        _organon(FakeMechane(praxeis=frozenset({Praxis.OCR})), kairos).run(Praxis.DETECT, IMG)
+        _pipeline(FakeBackend(tasks=frozenset({Task.OCR})), hooks).run(Task.DETECT, IMG)
     assert [type(e) for e in errors] == [AdapterError, NoBackendError]
 
 
 def test_before_hook_exception_propagates_and_error_hook_failure_is_swallowed() -> None:
-    kairos = Kairos()
-    kairos.on(Moment.BEFORE_INFER, lambda **_: (_ for _ in ()).throw(RuntimeError("hook bug")))
-    kairos.on(Moment.ON_ERROR, lambda **_: (_ for _ in ()).throw(RuntimeError("error hook bug")))
+    hooks = Hooks()
+    hooks.on(HookEvent.BEFORE_INFER, lambda **_: (_ for _ in ()).throw(RuntimeError("hook bug")))
+    hooks.on(HookEvent.ON_ERROR, lambda **_: (_ for _ in ()).throw(RuntimeError("error hook bug")))
     with pytest.raises(RuntimeError, match="^hook bug$"):  # not masked by the error hook
-        _organon(kairos=kairos).run(Praxis.DETECT, IMG)
+        _pipeline(hooks=hooks).run(Task.DETECT, IMG)
 
 
 def test_hooks_can_be_removed() -> None:
-    kairos = Kairos()
+    hooks = Hooks()
     calls: list[int] = []
 
     def hook(**_: Any) -> None:
         calls.append(1)
 
-    kairos.on(Moment.AFTER_INFER, hook)
-    kairos.off(Moment.AFTER_INFER, hook)
-    _organon(kairos=kairos).run(Praxis.DETECT, IMG)
+    hooks.on(HookEvent.AFTER_INFER, hook)
+    hooks.off(HookEvent.AFTER_INFER, hook)
+    _pipeline(hooks=hooks).run(Task.DETECT, IMG)
     assert calls == []
 
 
 def test_logging_hook(caplog: pytest.LogCaptureFixture) -> None:
-    kairos = Kairos()
-    LoggingHook(level=logging.INFO).attach(kairos)
+    hooks = Hooks()
+    LoggingHook(level=logging.INFO).attach(hooks)
     with caplog.at_level(logging.INFO, logger="horasis.pipeline"):
-        _organon(kairos=kairos).run(Praxis.DETECT, IMG)
+        _pipeline(hooks=hooks).run(Task.DETECT, IMG)
         with pytest.raises(AdapterError):
-            _organon(Exploding(), kairos).run(Praxis.DETECT, IMG)
+            _pipeline(Exploding(), hooks).run(Task.DETECT, IMG)
     text = caplog.text
-    assert "after_infer praxis=detect backend=fake latency_ms=" in text
-    assert "on_error praxis=detect" in text and "boom" in text
+    assert "after_infer task=detect backend=fake latency_ms=" in text
+    assert "on_error task=detect" in text and "boom" in text
 
 
 def test_timing_hook_records_and_summarises() -> None:
-    kairos = Kairos()
-    timing = TimingHook().attach(kairos)
+    hooks = Hooks()
+    timing = TimingHook().attach(hooks)
 
-    class Slow(FakeMechane):
-        def infer(self, praxis: Praxis, image: Physis, **options: object) -> Any:
+    class Slow(FakeBackend):
+        def infer(self, task: Task, image: Image, **options: object) -> Any:
             time.sleep(0.02)
-            return super().infer(praxis, image, **options)
+            return super().infer(task, image, **options)
 
-    organon = _organon(Slow(), kairos)
-    organon.run(Praxis.DETECT, IMG)
-    organon.run(Praxis.OCR, IMG)
-    assert [r.praxis for r in timing.records] == ["detect", "ocr"]
+    pipeline = _pipeline(Slow(), hooks)
+    pipeline.run(Task.DETECT, IMG)
+    pipeline.run(Task.OCR, IMG)
+    assert [r.task for r in timing.records] == ["detect", "ocr"]
     assert all(r.backend == "fake" and r.seconds >= 0.02 for r in timing.records)
     assert timing.summary()["detect"]["count"] == 1
     with pytest.raises(AdapterError):
-        _organon(Exploding(), kairos).run(Praxis.DETECT, IMG)
+        _pipeline(Exploding(), hooks).run(Task.DETECT, IMG)
     assert len(timing.records) == 2  # failed run recorded nothing
     timing.clear()
     assert timing.records == []
 
 
-# ---- client fixtures --------------------------------------------------------
+# Client fixtures
 
 
-def make_client(limit: int = 100, backends: list[FakeMechane] | None = None, **kanon_kw: Any) -> Skopos:
-    kanon = Kanon(
+def make_client(limit: int = 100, backends: list[FakeBackend] | None = None, **config_kw: Any) -> Client:
+    config = Config(
         default_backend="fake",
         tiers={"pro": TierRule(name="pro", quota=QuotaRule(limit=limit, window_seconds=3600))},
-        praxis_cost={"detect": 1, "classify": 1, "ocr": 1, "face": 1, "moderate": 1},
-        **kanon_kw,
+        task_cost={"detect": 1, "classify": 1, "ocr": 1, "face": 1, "moderate": 1},
+        **config_kw,
     )
     validator = InMemoryApiKeyValidator()
-    validator.register_simple("k", principal_id="u", tier=Klimax.PRO)
-    taxis = Taxis()
-    for b in backends or [FakeMechane()]:
-        taxis.register(b)
-    return Skopos(kanon=kanon, taxis=taxis, validator=validator)
+    validator.register_simple("k", principal_id="u", tier=Tier.PRO)
+    registry = BackendRegistry()
+    for b in backends or [FakeBackend()]:
+        registry.register(b)
+    return Client(config=config, registry=registry, validator=validator)
 
 
-# ---- batching ----------------------------------------------------------------
+# Batching
 
 
 def test_detect_batch_gives_per_item_results_and_errors() -> None:
@@ -352,7 +352,7 @@ def test_batch_items_describe_paths(tmp_path: Path) -> None:
     assert isinstance(items[1].error, ValidationError)
 
 
-# ---- frames / streaming ---------------------------------------------------------
+# Frames and streaming
 
 
 class FakeCapture:
@@ -419,7 +419,7 @@ def test_client_stream_charges_per_processed_frame(monkeypatch: pytest.MonkeyPat
         for i in range(0, 20, kw["every_n_frames"]):
             yield i, i / 10, np.zeros((6, 8, 3), dtype=np.uint8)
 
-    monkeypatch.setattr("horasis.api.skopos.iter_frames", fake_iter)
+    monkeypatch.setattr("horasis.api.client.iter_frames", fake_iter)
     client = make_client(limit=2)
     got: list[Any] = []
     with pytest.raises(QuotaExceededError):
@@ -438,18 +438,18 @@ def test_stream_urls_are_opt_in() -> None:
         next(make_client().detection.stream("https://x.test/v.mp4", api_key="k"))
 
 
-# ---- model lifecycle ----------------------------------------------------------------
+# Model lifecycle
 
 
-class Loadable(FakeMechane):
+class Loadable(FakeBackend):
     def __init__(self, name: str) -> None:
         super().__init__(name)
         self.loaded = False
         self.unloads = 0
 
-    def infer(self, praxis: Praxis, image: Physis, **options: object) -> Any:
+    def infer(self, task: Task, image: Image, **options: object) -> Any:
         self.loaded = True
-        return super().infer(praxis, image, **options)
+        return super().infer(task, image, **options)
 
     def is_loaded(self) -> bool:
         return self.loaded
@@ -485,10 +485,10 @@ def test_device_setting_reaches_backends() -> None:
     client = make_client(backends=[a, pinned], device="cpu")
     assert a.effective_device() == "cpu" and pinned.effective_device() == "cuda"
     late = Loadable("late")
-    client.taxis.register(late)  # registered after construction
+    client.registry.register(late)  # registered after construction
     assert late.effective_device() == "cpu"
     with pytest.raises(ValueError):
-        Kanon(device="tpu")  # type: ignore[arg-type]
+        Config(device="tpu")  # type: ignore[arg-type]
 
 
 def test_ultralytics_device_option() -> None:
@@ -502,7 +502,7 @@ def test_ultralytics_device_option() -> None:
 
 
 def test_warmup_skips_unavailable_but_raises_when_named() -> None:
-    class Missing(FakeMechane):
+    class Missing(FakeBackend):
         def warm_up(self) -> None:
             raise BackendUnavailableError("extra not installed")
 
@@ -514,21 +514,21 @@ def test_warmup_skips_unavailable_but_raises_when_named() -> None:
     assert client.warmup(["good"]) == ["good"]
 
 
-# ---- async ------------------------------------------------------------------------------
+# Async
 
 
 def test_async_client_mirrors_sync() -> None:
     async def scenario() -> None:
-        async with AsyncSkopos(make_client(limit=10)) as client:
+        async with AsyncClient(make_client(limit=10)) as client:
             one = await client.detection.detect(png_bytes(), api_key="k")
             assert isinstance(one, DetectionResult)
             items = await client.classification.classify_batch(
                 [png_bytes(), b"junk", png_bytes()], api_key="k"
             )
             assert [i.ok for i in items] == [True, False, True]
-            assert (await client.ocr.extract_text(png_bytes(), api_key="k")).praxis is Praxis.OCR
-            assert (await client.face.detect_faces(png_bytes(), api_key="k")).praxis is Praxis.FACE
-            assert (await client.moderation.moderate(png_bytes(), api_key="k")).praxis is Praxis.MODERATE
+            assert (await client.ocr.extract_text(png_bytes(), api_key="k")).task is Task.OCR
+            assert (await client.face.detect_faces(png_bytes(), api_key="k")).task is Task.FACE
+            assert (await client.moderation.moderate(png_bytes(), api_key="k")).task is Task.MODERATE
             # detect 1 + classify batch 2 (the malformed item is not charged) + ocr/face/moderate 3
             assert (await client.usage("k")).overall.used == 6
             assert await client.warmup() == ["fake"]
@@ -541,13 +541,13 @@ def test_async_client_mirrors_sync() -> None:
 def test_async_calls_run_concurrently_off_the_loop() -> None:
     barrier = threading.Barrier(3, timeout=5)
 
-    class Rendezvous(FakeMechane):
-        def infer(self, praxis: Praxis, image: Physis, **options: object) -> Any:
+    class Rendezvous(FakeBackend):
+        def infer(self, task: Task, image: Image, **options: object) -> Any:
             barrier.wait()  # only passes if 3 inferences are in flight at once
-            return super().infer(praxis, image, **options)
+            return super().infer(task, image, **options)
 
     async def scenario() -> None:
-        async with AsyncSkopos(make_client(backends=[Rendezvous()]), max_workers=4) as client:
+        async with AsyncClient(make_client(backends=[Rendezvous()]), max_workers=4) as client:
             results = await asyncio.gather(
                 *(client.detection.detect(png_bytes(), api_key="k") for _ in range(3))
             )
@@ -563,10 +563,10 @@ def test_async_batch_runs_items_concurrently_and_stream_iterates(
         for i in range(3):
             yield i, float(i), np.zeros((4, 4, 3), dtype=np.uint8)
 
-    monkeypatch.setattr("horasis.api.skopos.iter_frames", fake_iter)
+    monkeypatch.setattr("horasis.api.client.iter_frames", fake_iter)
 
     async def scenario() -> None:
-        async with AsyncSkopos(make_client()) as client:
+        async with AsyncClient(make_client()) as client:
             items = await client.detection.detect_batch([png_bytes()] * 4, api_key="k")
             assert len(items) == 4 and all(i.ok for i in items)
             seen = [f.frame_index async for f in client.detection.stream("v.mp4", api_key="k")]
@@ -575,7 +575,7 @@ def test_async_batch_runs_items_concurrently_and_stream_iterates(
     asyncio.run(scenario())
 
 
-# ---- OpenTelemetry -------------------------------------------------------------------------
+# OpenTelemetry
 
 
 class FakeSpan:
@@ -626,18 +626,18 @@ class FakeMeter:
 
 def test_otel_emits_spans_and_metrics_through_the_client() -> None:
     tracer, meter = FakeTracer(), FakeMeter()
-    sink = OpenTelemetryAisthesis(tracer=tracer, meter=meter)
+    sink = OTelTelemetry(tracer=tracer, meter=meter)
     assert sink.enabled
-    kanon = Kanon(
+    config = Config(
         default_backend="fake",
         tiers={"pro": TierRule(name="pro", quota=QuotaRule(limit=9, window_seconds=60))},
     )
     validator = InMemoryApiKeyValidator()
-    validator.register_simple("k", principal_id="u", tier=Klimax.PRO)
-    taxis = Taxis()
-    taxis.register(Exploding("bad"))
-    taxis.register(FakeMechane())
-    client = Skopos(kanon=kanon, taxis=taxis, validator=validator, aisthesis=sink)
+    validator.register_simple("k", principal_id="u", tier=Tier.PRO)
+    registry = BackendRegistry()
+    registry.register(Exploding("bad"))
+    registry.register(FakeBackend())
+    client = Client(config=config, registry=registry, validator=validator, telemetry=sink)
     client.detection.detect(png_bytes(), api_key="k", backend="fake")
     with pytest.raises(AdapterError):
         client.detection.detect(png_bytes(), api_key="k", backend="bad")
@@ -653,11 +653,11 @@ def test_otel_emits_spans_and_metrics_through_the_client() -> None:
 def test_otel_is_a_noop_without_the_package(monkeypatch: pytest.MonkeyPatch) -> None:
     for mod in ("opentelemetry", "opentelemetry.trace", "opentelemetry.metrics"):
         monkeypatch.setitem(sys.modules, mod, None)
-    sink = OpenTelemetryAisthesis()
+    sink = OTelTelemetry()
     assert sink.enabled is False
-    sink.on_call_start(praxis="detect", principal_id="u")
-    sink.on_call_end(praxis="detect", principal_id="u", backend="b", latency_ms=1.0, success=True)
-    sink.on_error(praxis="detect", principal_id="u", error=RuntimeError("x"))
+    sink.on_call_start(task="detect", principal_id="u")
+    sink.on_call_end(task="detect", principal_id="u", backend="b", latency_ms=1.0, success=True)
+    sink.on_error(task="detect", principal_id="u", error=RuntimeError("x"))
     client = make_client()
     assert isinstance(client.detection.detect(png_bytes(), api_key="k"), DetectionResult)
 

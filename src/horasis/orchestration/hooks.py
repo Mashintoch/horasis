@@ -1,119 +1,89 @@
-"""Built-in :class:`~horasis.orchestration.kairos.Kairos` hooks."""
+"""Pipeline hooks.
+
+Hooks observe a request as it moves through the pipeline; they cannot change
+it. Register a callable for a :class:`HookEvent` and it is called with these
+keyword arguments:
+
+==================  ==============================================================
+Event               Keyword arguments
+==================  ==============================================================
+``BEFORE_RESOLVE``  ``task``, and ``image`` or ``video``
+``AFTER_RESOLVE``   ``task``, ``backend`` (the chosen :class:`Backend`)
+``BEFORE_INFER``    ``task``, ``backend``, and ``image`` or ``video``
+``AFTER_INFER``     ``task``, ``backend``, ``result``
+``ON_ERROR``        ``task``, ``error`` (nothing else is guaranteed)
+==================  ==============================================================
+
+Write hooks as ``def hook(**payload): ...``, or name the arguments you want
+and add ``**_``, so they keep working when payloads grow.
+
+An exception raised by a before or after hook propagates to the caller (and
+fires ``ON_ERROR``). An exception raised by an ``ON_ERROR`` hook is logged and
+swallowed, so it cannot hide the real error. Built-in hooks live in :mod:`horasis.orchestration.builtin_hooks`.
+"""
 
 from __future__ import annotations
 
 import logging
-import threading
-import time
-from dataclasses import dataclass
+from collections.abc import Callable
+from enum import Enum
 from typing import Any
 
-from horasis.orchestration.kairos import Kairos, Moment
+from horasis.backend.base import Backend
+from horasis.foundation.schemas import Image, Result, Task
+
+logger = logging.getLogger(__name__)
 
 
-class LoggingHook:
-    """Logs each pipeline moment to a :mod:`logging` logger.
+class HookEvent(str, Enum):
+    """A named point in the orchestration pipeline that hooks can attach to."""
 
-    Args:
-        logger: Logger to use; defaults to ``horasis.pipeline``.
-        level: Level for normal moments (errors always log at WARNING).
-
-    Usage::
-
-        LoggingHook().attach(client.kairos)
-    """
-
-    def __init__(self, logger: logging.Logger | None = None, level: int = logging.DEBUG) -> None:
-        self._log = logger or logging.getLogger("horasis.pipeline")
-        self._level = level
-
-    def attach(self, kairos: Kairos) -> LoggingHook:
-        for moment in Moment:
-            kairos.on(moment, self._handler(moment))
-        return self
-
-    def _handler(self, moment: Moment) -> Any:
-        def hook(**payload: Any) -> None:
-            praxis = getattr(payload.get("praxis"), "value", payload.get("praxis"))
-            backend = getattr(payload.get("backend"), "name", None)
-            if moment is Moment.ON_ERROR:
-                self._log.warning("%s praxis=%s error=%r", moment.value, praxis, payload.get("error"))
-            elif moment is Moment.AFTER_INFER:
-                self._log.log(
-                    self._level,
-                    "%s praxis=%s backend=%s latency_ms=%.1f",
-                    moment.value,
-                    praxis,
-                    backend,
-                    getattr(payload.get("result"), "latency_ms", float("nan")),
-                )
-            else:
-                self._log.log(self._level, "%s praxis=%s backend=%s", moment.value, praxis, backend)
-
-        return hook
+    BEFORE_RESOLVE = "before_resolve"
+    AFTER_RESOLVE = "after_resolve"
+    BEFORE_INFER = "before_infer"
+    AFTER_INFER = "after_infer"
+    ON_ERROR = "on_error"
 
 
-@dataclass(frozen=True)
-class Timing:
-    """One measured inference: wall time from ``BEFORE_INFER`` to ``AFTER_INFER``."""
-
-    praxis: str
-    backend: str
-    seconds: float
+HookFn = Callable[..., None]
 
 
-class TimingHook:
-    """Measures pipeline inference time (including backend loading on first use).
-
-    Complements ``Theoria.latency_ms`` (which the backend reports itself) with
-    an outside-in measurement. Thread-safe. Records are kept in memory;
-    call :meth:`clear` periodically in long-running processes.
-    """
+class Hooks:
+    """Registers and fires hooks for each :class:`HookEvent`."""
 
     def __init__(self) -> None:
-        self.records: list[Timing] = []
-        self._lock = threading.Lock()
-        self._local = threading.local()
+        self._hooks: dict[HookEvent, list[HookFn]] = {event: [] for event in HookEvent}
 
-    def attach(self, kairos: Kairos) -> TimingHook:
-        kairos.on(Moment.BEFORE_INFER, self._before)
-        kairos.on(Moment.AFTER_INFER, self._after)
-        kairos.on(Moment.ON_ERROR, self._abandon)
-        return self
+    def on(self, event: HookEvent, fn: HookFn) -> None:
+        self._hooks[event].append(fn)
 
-    def _before(self, **_: Any) -> None:
-        self._local.start = time.perf_counter()
+    def off(self, event: HookEvent, fn: HookFn) -> None:
+        if fn in self._hooks[event]:
+            self._hooks[event].remove(fn)
 
-    def _after(self, **payload: Any) -> None:
-        start = getattr(self._local, "start", None)
-        if start is None:
+    def fire(self, event: HookEvent, **payload: Any) -> None:
+        """Call every hook for `event`; exceptions propagate (except ``ON_ERROR``)."""
+        if event is HookEvent.ON_ERROR:
+            for hook in list(self._hooks[event]):
+                try:
+                    hook(**payload)
+                except Exception:
+                    logger.exception("on_error hook %r failed", hook)
             return
-        self._local.start = None
-        timing = Timing(
-            praxis=str(getattr(payload.get("praxis"), "value", payload.get("praxis"))),
-            backend=str(getattr(payload.get("backend"), "name", "?")),
-            seconds=time.perf_counter() - start,
-        )
-        with self._lock:
-            self.records.append(timing)
+        for hook in list(self._hooks[event]):
+            hook(**payload)
 
-    def _abandon(self, **_: Any) -> None:
-        self._local.start = None
+    def before_resolve(self, *, task: Task, image: Image) -> None:
+        self.fire(HookEvent.BEFORE_RESOLVE, task=task, image=image)
 
-    def clear(self) -> None:
-        with self._lock:
-            self.records.clear()
+    def after_resolve(self, *, task: Task, backend: Backend) -> None:
+        self.fire(HookEvent.AFTER_RESOLVE, task=task, backend=backend)
 
-    def summary(self) -> dict[str, dict[str, float]]:
-        """Per-praxis ``{"count", "mean_s", "max_s"}``."""
-        with self._lock:
-            records = list(self.records)
-        out: dict[str, dict[str, float]] = {}
-        for praxis in sorted({r.praxis for r in records}):
-            secs = [r.seconds for r in records if r.praxis == praxis]
-            out[praxis] = {
-                "count": float(len(secs)),
-                "mean_s": sum(secs) / len(secs),
-                "max_s": max(secs),
-            }
-        return out
+    def before_infer(self, *, task: Task, backend: Backend, image: Image) -> None:
+        self.fire(HookEvent.BEFORE_INFER, task=task, backend=backend, image=image)
+
+    def after_infer(self, *, task: Task, backend: Backend, result: Result) -> None:
+        self.fire(HookEvent.AFTER_INFER, task=task, backend=backend, result=result)
+
+    def on_error(self, *, task: Task, error: BaseException) -> None:
+        self.fire(HookEvent.ON_ERROR, task=task, error=error)

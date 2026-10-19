@@ -6,11 +6,11 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from horasis.foundation.sphalma import ConfigurationError
+from horasis.foundation.errors import ConfigurationError
 
 
 class QuotaRule(BaseModel):
-    """A single rate/volume limit: at most ``limit`` calls per ``window_seconds``."""
+    """Windowed quota: at most ``limit`` units per ``window_seconds``."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -31,7 +31,7 @@ class RateRule(BaseModel):
         return self.burst or self.per_minute
 
 
-DEFAULT_PRAXIS_COST: dict[str, int] = {
+DEFAULT_TASK_COST: dict[str, int] = {
     "detect": 1,
     "classify": 1,
     "face": 1,
@@ -43,13 +43,13 @@ DEFAULT_PRAXIS_COST: dict[str, int] = {
 
 
 class TierRule(BaseModel):
-    """Configuration for one :class:`~horasis.access.klimax.Klimax` tier."""
+    """Limits and allowed tasks for one tier."""
 
     model_config = ConfigDict(frozen=True)
 
     name: str
     quota: QuotaRule
-    allowed_praxeis: list[str] = Field(
+    allowed_tasks: list[str] = Field(
         default_factory=lambda: [
             "detect",
             "classify",
@@ -59,24 +59,23 @@ class TierRule(BaseModel):
             "segment",
             "pose",
         ],
-        description="Praxis values this tier is permitted to invoke.",
+        description="Task values this tier is permitted to invoke.",
     )
-    rate: RateRule | None = Field(default=None, description="Per-minute limit across all praxeis.")
-    praxis_rates: dict[str, RateRule] = Field(
-        default_factory=dict, description="Extra per-minute limits for individual praxeis."
+    rate: RateRule | None = Field(default=None, description="Per-minute limit across all tasks.")
+    task_rates: dict[str, RateRule] = Field(
+        default_factory=dict, description="Extra per-minute limits for individual tasks."
     )
-    praxis_quotas: dict[str, QuotaRule] = Field(
-        default_factory=dict, description="Extra windowed quotas for individual praxeis."
+    task_quotas: dict[str, QuotaRule] = Field(
+        default_factory=dict, description="Extra windowed quotas for individual tasks."
     )
 
 
 class InputPolicy(BaseModel):
-    """Rules `Physis` applies when loading caller-supplied images.
+    """Limits applied when loading caller-supplied images.
 
     Attributes:
-        allow_urls: URL inputs are fetched only when this is True (off by
-            default so a caller-controlled string can never trigger a
-            network request unless the operator opted in).
+        allow_urls: Fetch URL inputs. Off by default, so a caller-supplied
+            string cannot trigger a network request unless the operator opts in.
         max_bytes: Largest accepted encoded image, in bytes.
         max_pixels: Largest accepted decoded image (width * height); guards
             against decompression bombs.
@@ -102,30 +101,29 @@ class InputPolicy(BaseModel):
     apply_exif_orientation: bool = True
 
 
-class Kanon(BaseModel):
-    """Top-level runtime configuration for `horasis`.
+class Config(BaseModel):
+    """Runtime configuration.
 
     Attributes:
         default_backend: Name registered in the backend registry to use
             when a task does not specify one explicitly.
         tiers: Mapping of tier name -> :class:`TierRule`.
-        telemetry_enabled: Whether :class:`~horasis.foundation.aisthesis.Aisthesis`
-            hooks should fire.
+        telemetry_enabled: Fire :class:`~horasis.foundation.telemetry.Telemetry` hooks.
         device: Compute device for backends that can choose: ``auto`` (let
             each backend decide; GPU if present), ``cpu``, ``cuda`` or ``mps``.
         max_loaded_models: Cap on backends holding models in memory at once;
             the least recently used is unloaded (and reloaded lazily on next use).
             ``None`` means no cap.
         inputs: Image-loading policy (size limits, formats, URL opt-in).
-        backend_order: Per-praxis backend preference, e.g.
+        backend_order: Per-task backend preference, e.g.
             ``{"ocr": ["easyocr", "tesseract"]}``. The first registered
-            backend in the list that supports the praxis wins.
+            backend in the list that supports the task wins.
         fallback_order: Backends tried (in order) after ``backend_order`` and
             ``default_backend`` found nothing, before any other registered one.
         moderation_threshold: Score at or above which a moderation category
             is flagged, unless overridden in ``moderation_thresholds``.
         moderation_thresholds: Per-category flag thresholds.
-        praxis_cost: Units of quota/rate each praxis consumes per call.
+        task_cost: Units of quota/rate each task consumes per call.
         moderation_safe_categories: Categories that describe benign content
             (e.g. ``"normal"``); never flagged regardless of score.
         auto_download_models: Let backends download missing model files (such as
@@ -134,7 +132,7 @@ class Kanon(BaseModel):
         rate_limit_store: Where per-minute token buckets live: ``memory`` (per
             process) or ``redis`` (shared by all workers; needs `redis_url`).
         redis_url: Redis URL used when `rate_limit_store` is ``redis`` and
-            `Skopos.build` is not given a limiter/quota store to reuse.
+            `Client.build` is not given a limiter/quota store to reuse.
         extra: Free-form namespace for plugin-specific settings.
     """
 
@@ -150,7 +148,7 @@ class Kanon(BaseModel):
     fallback_order: list[str] = Field(default_factory=list)
     moderation_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     moderation_thresholds: dict[str, float] = Field(default_factory=dict)
-    praxis_cost: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_PRAXIS_COST))
+    task_cost: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_TASK_COST))
     moderation_safe_categories: list[str] = Field(
         default_factory=lambda: ["normal", "safe", "sfw", "neutral", "drawings"]
     )
@@ -160,31 +158,31 @@ class Kanon(BaseModel):
     extra: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> Kanon:
-        """Load a :class:`Kanon` from a YAML file.
+    def from_yaml(cls, path: str | Path) -> Config:
+        """Load a :class:`Config` from a YAML file.
 
         Raises:
             ConfigurationError: if the file is missing or malformed.
         """
         p = Path(path)
         if not p.is_file():
-            raise ConfigurationError(f"Kanon config file not found: {p}")
+            raise ConfigurationError(f"config file not found: {p}")
         try:
             raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         except yaml.YAMLError as exc:
-            raise ConfigurationError(f"Kanon config file is not valid YAML: {p}") from exc
+            raise ConfigurationError(f"config file is not valid YAML: {p}") from exc
         return cls.from_dict(raw)
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> Kanon:
+    def from_dict(cls, raw: dict[str, Any]) -> Config:
         try:
             return cls.model_validate(raw)
         except Exception as exc:  # pydantic.ValidationError, narrowed for callers
-            raise ConfigurationError(f"Invalid Kanon configuration: {exc}") from exc
+            raise ConfigurationError(f"invalid configuration: {exc}") from exc
 
     @classmethod
-    def default(cls) -> Kanon:
-        """A sensible built-in configuration, used when no file is supplied."""
+    def default(cls) -> Config:
+        """Return the built-in configuration used when no file is given."""
         return cls(
             default_backend="ultralytics",
             telemetry_enabled=True,
@@ -206,13 +204,13 @@ class Kanon(BaseModel):
             },
         )
 
-    def cost_for(self, praxis: str) -> int:
-        """Units one call to `praxis` consumes (OCR/moderation cost more)."""
-        # pydantic fields look like FieldInfo to pylint, hence the no-member pragma
-        return max(1, self.praxis_cost.get(praxis, 1))  # pylint: disable=no-member
+    def cost_for(self, task: str) -> int:
+        """Return the quota units one call to `task` consumes."""
+        # pylint sees pydantic fields as FieldInfo
+        return max(1, self.task_cost.get(task, 1))  # pylint: disable=no-member
 
     def moderation_threshold_for(self, category: str) -> float:
-        """Flag threshold for a moderation `category` (per-category override wins)."""
+        """Return the flag threshold for a moderation `category`."""
         return self.moderation_thresholds.get(  # pylint: disable=no-member
             category, self.moderation_threshold
         )
@@ -221,4 +219,4 @@ class Kanon(BaseModel):
         try:
             return self.tiers[name]
         except KeyError as exc:
-            raise ConfigurationError(f"Unknown tier: {name!r}") from exc
+            raise ConfigurationError(f"unknown tier {name!r}") from exc

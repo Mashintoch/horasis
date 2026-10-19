@@ -4,12 +4,12 @@ import logging
 
 import pytest
 
-from horasis import Skopos
+from horasis import Client
 from horasis.access import RedisQuotaStore, RedisRateLimiter, TokenBucketLimiter, redis_backends
 from horasis.access.ratelimit import RateLimiter
 from horasis.cli import warn_if_limiter_not_shared
-from horasis.foundation.kanon import Kanon, QuotaRule, RateRule, TierRule
-from horasis.foundation.sphalma import ConfigurationError, RateLimitedError
+from horasis.foundation.config import Config, QuotaRule, RateRule, TierRule
+from horasis.foundation.errors import ConfigurationError, RateLimitedError
 
 fakeredis = pytest.importorskip("fakeredis")
 pytest.importorskip("lupa")  # fakeredis needs it to run Lua scripts
@@ -17,12 +17,12 @@ pytest.importorskip("lupa")  # fakeredis needs it to run Lua scripts
 KEY = "horasis:r:{u}:*"
 
 
-def _tier(per_minute: int = 60, burst: int = 2, **praxis: RateRule) -> TierRule:
+def _tier(per_minute: int = 60, burst: int = 2, **task: RateRule) -> TierRule:
     return TierRule(
         name="t",
         quota=QuotaRule(limit=1000, window_seconds=60),
         rate=RateRule(per_minute=per_minute, burst=burst),
-        praxis_rates=praxis,
+        task_rates=task,
     )
 
 
@@ -106,26 +106,26 @@ def test_redis_backends_share_one_client() -> None:
     assert store.client is client and limiter.client is client
 
 
-def test_build_wires_redis_limiter_from_kanon() -> None:
+def test_build_wires_redis_limiter_from_config() -> None:
     store = RedisQuotaStore(fakeredis.FakeRedis())
-    kanon = Kanon.default().model_copy(update={"rate_limit_store": "redis"})
-    client = Skopos.build(kanon=kanon, quota_store=store)
+    config = Config.default().model_copy(update={"rate_limit_store": "redis"})
+    client = Client.build(config=config, quota_store=store)
     assert isinstance(client.rate_limiter, RedisRateLimiter)
     assert client.rate_limiter.client is store.client
     with pytest.raises(ConfigurationError):
-        Skopos.build(kanon=kanon)  # redis requested, nothing to connect to
+        Client.build(config=config)  # redis requested, nothing to connect to
 
 
 def test_build_accepts_an_explicit_limiter() -> None:
     limiter = TokenBucketLimiter()
-    assert Skopos.build(rate_limiter=limiter).rate_limiter is limiter
+    assert Client.build(rate_limiter=limiter).rate_limiter is limiter
 
 
 def test_serve_warns_for_multiple_workers_with_in_process_limiter(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    local = Skopos.build()
-    shared = Skopos.build(rate_limiter=_limiter(fakeredis.FakeServer()))
+    local = Client.build()
+    shared = Client.build(rate_limiter=_limiter(fakeredis.FakeServer()))
     with caplog.at_level(logging.WARNING, logger="horasis"):
         assert warn_if_limiter_not_shared(1, local) is False
         assert warn_if_limiter_not_shared(4, shared) is False

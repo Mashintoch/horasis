@@ -1,27 +1,27 @@
-"""Small helpers shared by the concrete `Mechane` adapters."""
+"""Helpers shared by the backend adapters."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from typing import TypeVar
 
-from horasis.foundation.schemas import BoundingBox, Doxa, Point
+from horasis.foundation.schemas import BoundingBox, Confidence, Point
 
 T = TypeVar("T")
 
 
 def clamp01(value: float) -> float:
-    """Clamp `value` into the valid confidence range ``[0, 1]``."""
+    """Clamp `value` to ``[0, 1]``."""
     return max(0.0, min(1.0, float(value)))
 
 
-def doxa(value: float) -> Doxa:
-    """Build a `Doxa` from a possibly slightly out-of-range engine score."""
-    return Doxa(value=clamp01(value))
+def to_confidence(value: float) -> Confidence:
+    """Build a `Confidence` from an engine score that may be slightly out of range."""
+    return Confidence(value=clamp01(value))
 
 
 def polygon_to_box(points: Iterable[Sequence[float]]) -> BoundingBox:
-    """Axis-aligned box that encloses a polygon."""
+    """Return the axis-aligned box that encloses a polygon."""
     pts = [(float(p[0]), float(p[1])) for p in points]
     xs = [p[0] for p in pts]
     ys = [p[1] for p in pts]
@@ -29,7 +29,7 @@ def polygon_to_box(points: Iterable[Sequence[float]]) -> BoundingBox:
 
 
 def box_to_polygon(box: BoundingBox) -> list[Point]:
-    """Four corners of `box`, clockwise from top-left."""
+    """Return the four corners of `box`, clockwise from top-left."""
     return [
         (box.x_min, box.y_min),
         (box.x_max, box.y_min),

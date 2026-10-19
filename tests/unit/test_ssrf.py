@@ -6,8 +6,8 @@ from typing import Any
 import pytest
 
 from horasis.foundation import imaging
-from horasis.foundation.kanon import InputPolicy
-from horasis.foundation.sphalma import ValidationError
+from horasis.foundation.config import InputPolicy
+from horasis.foundation.errors import ValidationError
 from tests.conftest import png_bytes
 
 PUBLIC = "93.184.216.34"
@@ -247,8 +247,8 @@ def test_dns_failure_is_a_validation_error(monkeypatch: pytest.MonkeyPatch) -> N
         _fetch("http://nowhere.test/a.png")
 
 
-def test_to_physis_uses_ssrf_checked_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_to_image_uses_ssrf_checked_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
     _dns(monkeypatch, {"ok.test": ["10.0.0.9"]})
     _transport(monkeypatch, [_image()])
     with pytest.raises(ValidationError, match="non-public"):
-        imaging.to_physis("http://ok.test/a.png", InputPolicy(allow_urls=True))
+        imaging.to_image("http://ok.test/a.png", InputPolicy(allow_urls=True))
