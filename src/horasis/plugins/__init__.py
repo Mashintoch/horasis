@@ -1,4 +1,4 @@
-"""Plugin mechanism -- cross-cutting, sits alongside the backend layer."""
+"""Entry-point plugin loading; sits alongside the backend layer."""
 
 from horasis.plugins.loader import ENTRY_POINT_GROUP, PluginLoader
 

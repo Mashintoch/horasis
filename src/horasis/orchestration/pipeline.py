@@ -13,9 +13,9 @@ from horasis.orchestration.hooks import HookEvent, Hooks
 class Pipeline:
     """Resolves a backend and runs inference for a single request.
 
-    Every run fires the :class:`Hooks` (before/after resolve, before/
-    after infer, and ``ON_ERROR`` if anything raises) and tells the registry
-    which backend was just used so its LRU model cap can be enforced.
+    Every run fires the :class:`Hooks` around resolution and inference (and
+    ``ON_ERROR`` if anything raises), and tells the registry which backend was
+    used so it can enforce its loaded-model cap.
 
     Args:
         config: Runtime configuration, used for `default_backend`.
@@ -29,18 +29,17 @@ class Pipeline:
         self._hooks = hooks or Hooks()
 
     def _routing(self, task: Task) -> dict[str, list[str]]:
-        """Config-driven backend preference and fallback for `task`."""
+        """Return the configured backend preference and fallback for `task`."""
         return {
             "order": self._config.backend_order.get(task.value, []),
             "fallback": self._config.fallback_order,
         }
 
     def _apply_policy(self, result: Result) -> Result:
-        """Re-flag moderation results using the thresholds configured in `Config`.
+        """Re-flag moderation results with the thresholds in `Config`.
 
-        Whatever a backend decided, `Config.moderation_threshold(s)` and
-        `moderation_safe_categories` are authoritative, so behaviour is the
-        same across moderation backends (local or remote).
+        `Config` overrides whatever the backend decided, so local and remote
+        moderation backends behave the same.
         """
         if not isinstance(result, ModerationResult):
             return result
@@ -69,7 +68,7 @@ class Pipeline:
         backend: str | None,
         infer: Callable[[Backend], Any],
     ) -> Any:
-        """Shared pipeline: hooks -> resolve -> hooks -> infer -> hooks (+ errors)."""
+        """Resolve and infer, firing hooks before and after each step and on error."""
         try:
             self._hooks.fire(HookEvent.BEFORE_RESOLVE, task=task, **subject)
             resolved = resolve(
@@ -97,15 +96,14 @@ class Pipeline:
         backend: str | None = None,
         **options: object,
     ) -> Result:
-        """Execute `task` against `image`, returning a `Result` result.
+        """Run `task` on `image` and return the result.
 
         Args:
-            task: The task to perform.
-            image: The input image, already normalized to `Image`.
-            backend: Optional explicit backend name; otherwise resolution
-                follows `Config.backend_order`, `default_backend`, then
-                `fallback_order`, then any backend that supports `task`.
-            **options: Passed through verbatim to the resolved backend.
+            image: The input, already converted to `Image`.
+            backend: Backend name to use. Otherwise resolution follows
+                `Config.backend_order`, `default_backend`, `fallback_order`,
+                then any backend that supports `task`.
+            **options: Passed unchanged to the backend.
         """
         result: Result = self._execute(
             task,
@@ -124,11 +122,10 @@ class Pipeline:
         backend: str | None = None,
         **options: object,
     ) -> Result:
-        """Execute `task` against a video, returning a `Result` result.
+        """Run `task` on a video and return the result.
 
-        Same resolution and hooks as `run`, but resolves via
-        `BackendRegistry.resolve_video` and calls `Backend.infer_video`. Hooks receive
-        ``video=`` instead of ``image=``.
+        Like `run`, but resolves with `BackendRegistry.resolve_video` and calls
+        `Backend.infer_video`. Hooks receive ``video=`` instead of ``image=``.
         """
         result: Result = self._execute(
             task,
@@ -148,15 +145,14 @@ class Pipeline:
         backend: str | None = None,
         **options: object,
     ) -> tuple[Result, object]:
-        """Execute `task` against a video and write an annotated copy, in one pass.
-
-        Prefer this over `run_video` followed by `Result.annotate()` when
-        performance matters -- a supporting backend decodes the video once.
-        Raises `BackendUnavailableError` if no backend supports the combined
-        operation; callers can fall back to the two-call approach.
+        """Run `task` on a video and write an annotated copy in one decode pass.
 
         Returns:
-            A `(result, output_path)` tuple.
+            A ``(result, output_path)`` tuple.
+
+        Raises:
+            BackendUnavailableError: if no backend supports the combined
+                operation. Fall back to `run_video` and `Result.annotate`.
         """
         outcome: tuple[Result, object] = self._execute(
             task,

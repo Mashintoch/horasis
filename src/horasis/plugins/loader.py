@@ -10,7 +10,7 @@ ENTRY_POINT_GROUP = "horasis.backends"
 
 
 class PluginLoader:
-    """Discovers and registers third-party `Backend` backends."""
+    """Discovers and registers third-party backends."""
 
     def __init__(self, group: str = ENTRY_POINT_GROUP) -> None:
         self._group = group
@@ -23,34 +23,32 @@ class PluginLoader:
             factory = entry_point.load()
         except Exception as exc:
             raise PluginError(
-                f"Failed to load plugin entry point {entry_point.name!r}: {exc}"
+                f"cannot load plugin entry point {entry_point.name!r}: {exc}"
             ) from exc
 
         try:
             instance = factory(**construction_kwargs)
         except Exception as exc:
             raise PluginError(
-                f"Failed to construct backend from plugin {entry_point.name!r}: {exc}"
+                f"cannot construct backend from plugin {entry_point.name!r}: {exc}"
             ) from exc
 
         if not isinstance(instance, Backend):
             raise PluginError(
-                f"Plugin {entry_point.name!r} did not produce a Backend instance "
+                f"plugin {entry_point.name!r} did not produce a Backend instance "
                 f"(got {type(instance).__name__})"
             )
         return instance
 
     def discover(self, registry: BackendRegistry, *, strict: bool = False) -> list[str]:
-        """Discover and register all plugins in the entry-point group onto `registry`.
+        """Register every plugin in the entry-point group on `registry`.
 
         Args:
-            registry: Registry to register discovered backends onto.
-            strict: If True, a single failing plugin raises `PluginError`
-                immediately. If False (default), failing plugins are
-                skipped and discovery continues.
+            strict: Raise `PluginError` on the first failing plugin instead
+                of skipping it.
 
         Returns:
-            Names of the backends successfully registered.
+            Names of the backends registered.
         """
         registered: list[str] = []
         for ep in self.discover_entry_points():

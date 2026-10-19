@@ -1,26 +1,25 @@
-"""Hooks -- the pipeline hook system.
+"""Pipeline hooks.
 
-Hooks let you observe a request as it moves through the pipeline, without
-changing it. Register a callable for a :class:`HookEvent` and it is called with
-keyword arguments describing that event:
+Hooks observe a request as it moves through the pipeline; they cannot change
+it. Register a callable for a :class:`HookEvent` and it is called with these
+keyword arguments:
 
 ==================  ==============================================================
-HookEvent              Keyword arguments
+Event               Keyword arguments
 ==================  ==============================================================
 ``BEFORE_RESOLVE``  ``task``, and ``image`` or ``video``
 ``AFTER_RESOLVE``   ``task``, ``backend`` (the chosen :class:`Backend`)
 ``BEFORE_INFER``    ``task``, ``backend``, and ``image`` or ``video``
 ``AFTER_INFER``     ``task``, ``backend``, ``result``
-``ON_ERROR``        ``task``, ``error`` (and nothing else is guaranteed)
+``ON_ERROR``        ``task``, ``error`` (nothing else is guaranteed)
 ==================  ==============================================================
 
-Write hooks as ``def hook(**payload): ...`` (or name the arguments you want
-and add ``**_``) so they keep working when payloads grow.
+Write hooks as ``def hook(**payload): ...``, or name the arguments you want
+and add ``**_``, so they keep working when payloads grow.
 
-Failure semantics: an exception raised by a *before/after* hook propagates to
-the caller of the request (and then fires ``ON_ERROR``). An exception raised
-by an ``ON_ERROR`` hook is logged and swallowed, so it can never hide the real
-error. Built-in hooks live in :mod:`horasis.orchestration.builtin_hooks`.
+An exception raised by a before or after hook propagates to the caller (and
+fires ``ON_ERROR``). An exception raised by an ``ON_ERROR`` hook is logged and
+swallowed, so it cannot hide the real error. Built-in hooks live in :mod:`horasis.orchestration.builtin_hooks`.
 """
 
 from __future__ import annotations
@@ -50,11 +49,7 @@ HookFn = Callable[..., None]
 
 
 class Hooks:
-    """Registers and fires hooks at named :class:`HookEvent`s.
-
-    Hooks are advisory: they cannot mutate the pipeline's outcome, only
-    observe it (e.g. for logging, metrics, or debugging).
-    """
+    """Registers and fires hooks for each :class:`HookEvent`."""
 
     def __init__(self) -> None:
         self._hooks: dict[HookEvent, list[HookFn]] = {event: [] for event in HookEvent}
@@ -73,7 +68,7 @@ class Hooks:
                 try:
                     hook(**payload)
                 except Exception:
-                    logger.exception("Hooks on_error hook %r failed", hook)
+                    logger.exception("on_error hook %r failed", hook)
             return
         for hook in list(self._hooks[event]):
             hook(**payload)

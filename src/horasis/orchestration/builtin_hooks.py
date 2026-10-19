@@ -1,4 +1,4 @@
-"""Built-in :class:`~horasis.orchestration.hooks.Hooks`."""
+"""Built-in hooks for :class:`~horasis.orchestration.hooks.Hooks`."""
 
 from __future__ import annotations
 
@@ -63,11 +63,11 @@ class Timing:
 
 
 class TimingHook:
-    """Measures pipeline inference time (including backend loading on first use).
+    """Measures pipeline inference time, including backend loading on first use.
 
-    Complements ``Result.latency_ms`` (which the backend reports itself) with
-    an outside-in measurement. Thread-safe. Records are kept in memory;
-    call :meth:`clear` periodically in long-running processes.
+    ``Result.latency_ms`` is what the backend reports; this measures from
+    outside. Thread-safe. Records stay in memory, so call :meth:`clear`
+    periodically in long-running processes.
     """
 
     def __init__(self) -> None:
@@ -105,7 +105,7 @@ class TimingHook:
             self.records.clear()
 
     def summary(self) -> dict[str, dict[str, float]]:
-        """Per-task ``{"count", "mean_s", "max_s"}``."""
+        """Return ``{"count", "mean_s", "max_s"}`` per task."""
         with self._lock:
             records = list(self.records)
         out: dict[str, dict[str, float]] = {}
