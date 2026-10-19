@@ -1,22 +1,22 @@
-"""HTTP server exposing a :class:`Client` client (extra: ``horasis[server]``).
+"""HTTP server for a :class:`Client` (extra: ``horasis[server]``).
 
-This is what :class:`~horasis.backend.remote_adapter.RemoteAdapter` talks to,
-but any HTTP client works::
+:class:`~horasis.backend.remote_adapter.RemoteAdapter` talks to it, and so can
+any HTTP client::
 
     curl -H "X-API-Key: $KEY" -F image=@photo.jpg -F options='{"conf": 0.4}' \\
          http://localhost:8000/v1/detect
 
 Endpoints:
 
-* ``GET  /health`` -- liveness and the tasks each backend serves (no auth).
-* ``GET  /usage``  -- used/remaining quota for the caller (``X-API-Key``).
-* ``POST /v1/{task}`` -- run one of ``detect classify ocr face moderate
-  segment pose`` on an uploaded ``image`` (multipart). Optional form fields:
-  ``options`` (JSON object, whitelisted per task) and ``backend``.
+* ``GET  /health``: liveness and the tasks each backend serves (no auth).
+* ``GET  /usage``: used and remaining quota for the caller (``X-API-Key``).
+* ``POST /v1/{task}``: run one of ``detect classify ocr face moderate segment
+  pose`` on an uploaded ``image`` (multipart). Optional form fields:
+  ``options`` (JSON object, allow-listed per task) and ``backend``.
 
 Errors are ``{"error": {"type": ..., "message": ...}}`` with the status codes
-documented on :func:`create_app`. Build the app with your own ``Client`` so you
-control the API-key validator, quota store, rate limits and backends.
+documented on :func:`create_app`. Build the app from your own ``Client`` to
+choose the API-key validator, quota store, rate limits and backends.
 """
 
 from __future__ import annotations
@@ -47,18 +47,18 @@ try:
     from fastapi.responses import JSONResponse
 except ImportError as exc:  # pragma: no cover - exercised only without the extra
     raise ImportError(
-        "horasis.server needs FastAPI. Install it with: pip install 'horasis[server]'"
+        "horasis.server needs FastAPI: pip install 'horasis[server]'"
     ) from exc
 
 
 class UploadTooLargeError(HorasisError):
-    """The uploaded image exceeded ``Config.inputs.max_bytes``."""
+    """Raised when an upload exceeds ``Config.inputs.max_bytes``."""
 
 
 _Num = (int, float)
 
-#: Options a caller may pass per task, with their types. Anything else is
-#: rejected: options are forwarded to model code, so they must be whitelisted.
+#: Options a caller may pass per task, with their types. Options reach model
+#: code, so anything not listed here is rejected.
 ALLOWED_OPTIONS: dict[str, dict[str, type | tuple[type, ...]]] = {
     "detect": {
         "conf": _Num,
@@ -91,11 +91,11 @@ def parse_options(task: str, raw: str | None) -> dict[str, Any]:
     for key, value in options.items():
         if key not in allowed:
             raise ValidationError(
-                f"Option {key!r} is not allowed for {task!r}; allowed: {sorted(allowed)}"
+                f"option {key!r} not allowed for {task!r}; allowed: {sorted(allowed)}"
             )
         wants_bool = allowed[key] is bool
         if isinstance(value, bool) != wants_bool or not isinstance(value, allowed[key]):
-            raise ValidationError(f"Option {key!r} has the wrong type")
+            raise ValidationError(f"option {key!r} has the wrong type")
     return options
 
 
@@ -110,7 +110,7 @@ def _error(status: int, kind: str, message: str, **extra: Any) -> JSONResponse:
 
 
 def error_response(exc: Exception) -> JSONResponse:
-    """Map an exception to the wire error format (also used by the tests)."""
+    """Map an exception to the wire error format."""
     message = exc.message if isinstance(exc, HorasisError) else "Internal server error"
     if isinstance(exc, ExpiredApiKeyError):
         return _error(401, "expired_api_key", message)
@@ -167,7 +167,7 @@ def _dispatch(client: Client, task: str) -> Callable[..., Result]:
 def create_app(client: Client) -> FastAPI:
     """Build the FastAPI app serving `client`.
 
-    Status codes: 401 bad/expired/revoked key, 403 not allowed (tier/scope),
+    Status codes: 401 bad, expired or revoked key, 403 not allowed (tier or scope),
     404 unknown task, 413 upload too large, 422 invalid input or options,
     429 quota or rate limit (with ``Retry-After``), 501 no backend for the
     task, 500 backend failure.
@@ -198,7 +198,7 @@ def create_app(client: Client) -> FastAPI:
     @app.get("/usage")
     def usage(x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
         if not x_api_key:
-            raise InvalidApiKeyError("Missing X-API-Key header")
+            raise InvalidApiKeyError("missing X-API-Key header")
         return client.usage(x_api_key).model_dump(mode="json")
 
     @app.post("/v1/{task}")
@@ -210,14 +210,14 @@ def create_app(client: Client) -> FastAPI:
         x_api_key: str | None = Header(default=None),
     ) -> Any:
         if task not in {p.value for p in Task}:
-            return _error(404, "unknown_task", f"Unknown task {task!r}")
+            return _error(404, "unknown_task", f"unknown task {task!r}")
         if not x_api_key:
-            raise InvalidApiKeyError("Missing X-API-Key header")
+            raise InvalidApiKeyError("missing X-API-Key header")
         parsed = parse_options(task, options)
         limit = client.config.inputs.max_bytes
         data = image.file.read(limit + 1)
         if len(data) > limit:
-            raise UploadTooLargeError(f"Upload exceeds the {limit}-byte limit")
+            raise UploadTooLargeError(f"upload exceeds the {limit}-byte limit")
         call = _dispatch(client, task)
         kwargs: dict[str, Any] = {"api_key": x_api_key, "backend": backend}
         if task == "detect":

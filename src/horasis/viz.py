@@ -1,4 +1,4 @@
-"""Image and video annotation helpers for Horasis."""
+"""Draw results on images and videos."""
 
 from __future__ import annotations
 
@@ -36,20 +36,19 @@ def _load_pillow() -> Any:
         from PIL import ImageDraw, ImageFont
     except ImportError as exc:
         raise VisualizationUnavailableError(
-            "The 'Pillow' package is required for horasis.viz. "
-            "Install it with: pip install 'horasis[viz]'"
+            "horasis.viz needs the Pillow package: pip install 'horasis[viz]'"
         ) from exc
     return PILImageModule, ImageDraw, ImageFont
 
 
 def _open_image(image: Any) -> PILImage:
-    """Load any supported image input as upright RGB via the shared loader."""
+    """Load any supported image input as upright RGB."""
     _load_pillow()
     return load_rgb(to_image(image))
 
 
 def _color_for_label(label: str) -> tuple[int, int, int]:
-    """Deterministic, reasonably distinct color per label (no external palette dep)."""
+    """Return a stable, distinct colour for `label`."""
     h = hash(label) & 0xFFFFFF
     r, g, b = (h >> 16) & 0xFF, (h >> 8) & 0xFF, h & 0xFF
     # Keep colors away from near-black/near-white so they stay visible on most images.
@@ -108,13 +107,11 @@ def _draw_boxes(
 
 
 def _resolve_image_output_path(output_path: str | Path | None) -> tuple[Path, dict[str, Any]]:
-    """Normalize image output targets.
+    """Resolve where an annotated image is saved.
 
-    If no path is given, save to the current working directory as
-    `annotated.png`.
-    If callers pass an existing directory, write `annotated.png` inside it.
-    If callers pass a path without an extension, force PNG output so Pillow
-    does not need to infer a format from the filename.
+    No path means ``annotated.png`` in the working directory; a directory
+    means ``annotated.png`` inside it; a path without an extension gets
+    ``.png`` so Pillow need not guess the format.
     """
     path = Path.cwd() / "annotated.png" if output_path is None else Path(output_path)
     save_kwargs: dict[str, Any] = {}
@@ -140,24 +137,18 @@ def render_detections(
     font_size: int = 16,
     output_path: str | Path | None = None,
 ) -> PILImage:
-    """Draw `result.detections` on `image` and return the annotated image.
+    """Draw `result.detections` on `image`, save it and return it.
 
     Args:
-        image: The original input -- a file path, raw bytes, or `Image`.
-        result: A `DetectionResult` produced by `Client.detection.detect(...)`.
-        show_labels: Draw each detection's class label.
-        show_confidence: Draw each detection's confidence score.
-        box_color: Fixed RGB color for every box; if omitted, a color is
-            derived deterministically per label so classes stay visually
-            distinct across calls.
+        image: The original input: a file path, raw bytes or an `Image`.
+        box_color: Fixed RGB colour for every box; default is one per label.
         line_width: Box border thickness in pixels.
         font_size: Caption font size in points.
-        output_path: If given, save the annotated image there. If omitted,
-            the image is saved to the current working directory as
-            `annotated.png`.
+        output_path: Where to save; default ``annotated.png`` in the working
+            directory.
 
     Raises:
-        VisualizationUnavailableError: if Pillow is not installed.
+        VisualizationUnavailableError: if Pillow is missing.
     """
     pil_image = _open_image(image)
     annotated = _draw_boxes(
@@ -188,11 +179,7 @@ def render_faces(
     font_size: int = 16,
     output_path: str | Path | None = None,
 ) -> PILImage:
-    """Draw `result.faces` on `image` and return the annotated image.
-
-    Same parameters and behavior as `render_detections`, applied to a
-    `FaceResult` instead of a `DetectionResult`.
-    """
+    """Draw `result.faces` on `image`; parameters as in `render_detections`."""
     pil_image = _open_image(image)
     annotated = _draw_boxes(
         pil_image,
@@ -215,8 +202,7 @@ def _load_cv2() -> Any:
         import cv2
     except ImportError as exc:
         raise VisualizationUnavailableError(
-            "The 'opencv-python-headless' package is required for video annotation. "
-            "Install it with: pip install 'horasis[viz]'"
+            "video annotation needs opencv-python-headless: pip install 'horasis[viz]'"
         ) from exc
     return cv2
 
@@ -224,10 +210,8 @@ def _load_cv2() -> Any:
 class _Cv2VideoWriter:
     """Fallback writer using `cv2.VideoWriter` with the `mp4v` codec.
 
-    Used only when `imageio-ffmpeg` isn't installed. `mp4v` is far less
-    space-efficient than H.264 (the PyPI OpenCV wheels omit H.264 encoding
-    support for licensing reasons) -- expect noticeably larger output files
-    than the source video when this fallback is in use.
+    Used only without `imageio-ffmpeg`. The PyPI OpenCV wheels omit H.264 for
+    licensing reasons, and `mp4v` output is much larger.
     """
 
     def __init__(self, cv2: Any, path: str, fps: float, width: int, height: int) -> None:
@@ -242,10 +226,9 @@ class _Cv2VideoWriter:
 
 
 class _FfmpegVideoWriter:
-    """Writer using `imageio` + the bundled static FFmpeg binary from
-    `imageio-ffmpeg`, encoding with H.264. Produces file sizes far closer
-    to (often smaller than) typical camera/CCTV source footage than the
-    `mp4v` fallback -- H.264 is what most cameras already encode with.
+    """H.264 writer using `imageio` and the FFmpeg binary bundled by `imageio-ffmpeg`.
+
+    Output size is close to typical camera footage, unlike the `mp4v` fallback.
     """
 
     def __init__(self, cv2: Any, path: str, fps: float) -> None:
@@ -272,12 +255,10 @@ def _open_video_writer(cv2: Any, path: str, fps: float, width: int, height: int)
 
 
 def _video_capture_source(video: str | Path | bytes | Video) -> tuple[Any, str | None]:
-    """Normalize `video` into something `cv2.VideoCapture` can open.
+    """Return ``(source, temp_path_or_None)`` that `cv2.VideoCapture` can open.
 
-    Returns (source, temp_file_path_to_clean_up_or_None). Mirrors
-    `UltralyticsAdapter._video_source_for` -- duplicated rather than
-    imported, since `horasis.viz` intentionally depends only on the
-    foundation layer, not the backend layer.
+    Duplicates `UltralyticsAdapter._video_source_for` because `horasis.viz`
+    may import only from the foundation layer.
     """
     if isinstance(video, Video):
         vid = video
@@ -291,7 +272,7 @@ def _video_capture_source(video: str | Path | bytes | Video) -> tuple[Any, str |
             else Video.from_path(source)
         )
     else:
-        raise ValidationError(f"Unsupported video input type: {type(video).__name__}")
+        raise ValidationError(f"unsupported video input type: {type(video).__name__}")
 
     if vid.url is not None:
         return vid.url, None
@@ -303,7 +284,7 @@ def _video_capture_source(video: str | Path | bytes | Video) -> tuple[Any, str |
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp:
             temp.write(vid.data)
         return temp.name, temp.name
-    raise ValidationError("Video has neither `path`, `url`, nor `data` set")
+    raise ValidationError("video has neither `path`, `url` nor `data` set")
 
 
 def render_video(
@@ -318,32 +299,25 @@ def render_video(
     line_width: int = 3,
     font_size: int = 16,
 ) -> Path:
-    """Draw `result.frames` back onto `video` and write an annotated video file.
+    """Draw `result.frames` onto `video` and write an annotated video file.
 
-    Re-reads `video` frame by frame (a separate pass from whatever produced
-    `result` via `ObjectDetector.detect_video`), draws boxes only on the
-    frames present in `result.frames` (others pass through unannotated,
-    e.g. if `sample_every_n_frames` skipped them), and writes the result to
-    `output_path`.
+    `video` is read again, separately from the `detect_video` call that
+    produced `result`. Frames missing from `result` (skipped by
+    `sample_every_n_frames`) are written unannotated.
 
     Args:
-        video: The same source originally passed to `detect_video` --
-            a local path, URL, raw bytes, or `Video`.
-        result: The `VideoDetectionResult` from `detect_video`.
-        output_path: Where to write the annotated video (e.g. `"out.mp4"`).
-        show_labels: Draw each detection's class label.
-        show_confidence: Draw each detection's confidence score.
-        box_color: Fixed RGB color for every box; if omitted, derived per
-            label, same as `render_detections`.
+        video: The source passed to `detect_video`: a local path, URL, raw
+            bytes or a `Video`.
+        output_path: Where to write the video, e.g. ``"out.mp4"``.
+        box_color: Fixed RGB colour for every box; default is one per label.
         line_width: Box border thickness in pixels.
         font_size: Caption font size in points.
 
     Returns:
-        `Path(output_path)`, for convenience.
+        ``Path(output_path)``.
 
     Raises:
-        VisualizationUnavailableError: if Pillow or opencv-python-headless
-            is not installed.
+        VisualizationUnavailableError: if Pillow or OpenCV is missing.
         ValidationError: if `video` cannot be opened.
     """
     import os
@@ -361,7 +335,7 @@ def render_video(
     if not cap.isOpened():
         if temp_file is not None:
             os.unlink(temp_file)
-        raise ValidationError(f"Could not open video: {video!r}")
+        raise ValidationError(f"cannot open video {video!r}")
 
     fps = result.fps or cap.get(cv2.CAP_PROP_FPS) or 30.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -475,7 +449,7 @@ _SKELETON = (
 
 
 def render_segments(image: Any, result: SegmentationResult, *, line_width: int = 2, **_ignored: Any) -> PILImage:
-    """Draw each segment's outline (and label colour) on a copy of `image`."""
+    """Draw each segment's outline in its label colour on a copy of `image`."""
     _, ImageDraw, _ = _load_pillow()
     annotated = _open_image(image).copy()
     draw = ImageDraw.Draw(annotated)
@@ -514,10 +488,10 @@ def render_poses(
 
 
 def draw_result(image: Any, result: Any, **options: Any) -> PILImage:
-    """Draw any image-based result on `image` and return it, without saving.
+    """Draw any image-based result on `image` and return it without saving.
 
     Detections and faces get boxes, OCR gets polygons and text, and
-    classification / moderation results get a caption banner.
+    classification and moderation results get a caption banner.
     """
     if isinstance(result, OcrResult):
         return render_ocr(image, result, **options)
@@ -538,7 +512,7 @@ def draw_result(image: Any, result: Any, **options: Any) -> PILImage:
     if items is None and not hasattr(result, "frames"):
         items = []
     if items is None:
-        raise ValidationError("Video results cannot be drawn on a single image; use annotate()")
+        raise ValidationError("video results cannot be drawn on a single image; use annotate()")
     keys = {"show_labels", "show_confidence", "box_color", "text_color", "line_width", "font_size"}
     kwargs = {k: v for k, v in options.items() if k in keys}
     return _draw_boxes(

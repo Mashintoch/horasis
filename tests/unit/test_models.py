@@ -46,7 +46,7 @@ def test_registry_entries_are_complete_and_pinned() -> None:
     spec = models.get_spec("yunet")
     assert len(spec.sha256) == 64 and spec.filename.endswith(".onnx")
     assert "/raw/main/" not in spec.url  # pinned to a commit, not a moving branch
-    with pytest.raises(ConfigurationError, match="Unknown model"):
+    with pytest.raises(ConfigurationError, match="unknown model"):
         models.get_spec("nope")
 
 
@@ -76,7 +76,7 @@ def test_cache_hit_does_not_download(fake_spec: models.ModelSpec) -> None:
 
 
 def test_checksum_mismatch_deletes_and_raises(fake_spec: models.ModelSpec) -> None:
-    with pytest.raises(ModelDownloadError, match="Checksum mismatch"):
+    with pytest.raises(ModelDownloadError, match="checksum mismatch"):
         models.pull("yunet", opener=Opener(b"tampered"))
     assert list(models.cache_dir().iterdir()) == []
     assert not models.is_cached("yunet")

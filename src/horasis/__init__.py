@@ -1,10 +1,9 @@
-"""horasis -- a layered, plugin-friendly computer vision SDK.
+"""Computer vision SDK with API-key access control.
 
-The only supported import surface for external callers is this top-level
-module and :mod:`horasis.api`. Everything under `foundation`, `access`,
-`backend`, `orchestration`, and `plugins` is public for extension authors
-(writing a new `Backend` backend, a custom `Telemetry` sink, etc.) but is
-not part of the stability guarantee of the top-level API.
+Applications import from this module and :mod:`horasis.api`. The
+`foundation`, `access`, `backend`, `orchestration` and `plugins` packages
+are for extension authors (a new `Backend`, a custom `Telemetry` sink) and
+are not covered by the stability guarantee of the top-level API.
 
 Quick start:
     >>> from horasis import Client, InMemoryApiKeyValidator, Tier

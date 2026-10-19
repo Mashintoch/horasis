@@ -7,8 +7,8 @@ Commands::
     horasis models list|pull NAME|path NAME|verify
     horasis serve [--host H] [--port P] [--keys-file FILE]   (needs horasis[server])
 
-The CLI is a local, single-user tool: it runs as an internal enterprise-tier
-principal, so no API key is needed for the image commands.
+The image commands run locally as an internal enterprise-tier principal, so
+they need no API key.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
 
 
 def _default_backends(args: argparse.Namespace) -> list[Backend]:
-    """Optional backends registered next to Ultralytics (all load lazily)."""
+    """Return the optional backends registered next to Ultralytics; all load lazily."""
     return [
         EasyOCRAdapter(),
         TesseractAdapter(),
@@ -71,7 +71,7 @@ def _default_backends(args: argparse.Namespace) -> list[Backend]:
 
 
 def _build_client(args: argparse.Namespace) -> tuple[Client, list[tuple[str, str]]]:
-    """Create the client; also returns ``(plugin_name, status)`` for each plugin found."""
+    """Build the client and return it with ``(plugin_name, status)`` for each plugin found."""
     config = Config.from_yaml(args.config) if args.config else Config.default()
     update: dict[str, Any] = {"device": args.device}
     if args.allow_urls:
@@ -98,7 +98,7 @@ def _build_client(args: argparse.Namespace) -> tuple[Client, list[tuple[str, str
 
 
 def format_result(result: Result) -> str:
-    """Human-readable rendering of any result type."""
+    """Format any result as plain text for the terminal."""
 
     def box(b: Any) -> str:
         return f"[{b.x_min:.0f}, {b.y_min:.0f}, {b.x_max:.0f}, {b.y_max:.0f}]"
@@ -149,7 +149,7 @@ def _add_common(p: argparse.ArgumentParser, *, image: bool) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="horasis", description="Computer vision from the shell.")
+    parser = argparse.ArgumentParser(prog="horasis", description="computer vision from the shell")
     parser.add_argument("--version", action="version", version=f"horasis {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
     for name in COMMANDS:
@@ -201,7 +201,7 @@ def _cmd_models(args: argparse.Namespace, out: Callable[[str], None]) -> int:
     if args.models_command == "list":
         for spec in models.REGISTRY.values():
             state = "cached" if models.is_cached(spec.name) else "not cached"
-            out(f"{spec.name:<10} {state:<11} {spec.license}  -- {spec.description}")
+            out(f"{spec.name:<10} {state:<11} {spec.license}  {spec.description}")
         out(f"cache dir: {models.cache_dir()}")
     elif args.models_command == "pull":
         out(str(models.pull(args.name)))
@@ -249,9 +249,9 @@ def warn_if_limiter_not_shared(workers: int, client: Client) -> bool:
     """Log a warning when several workers each keep their own rate-limit buckets."""
     if workers > 1 and not getattr(client.rate_limiter, "shared", False):
         logging.getLogger("horasis").warning(
-            "Serving with %d workers but the rate limiter is in-process: every worker enforces "
-            "its own per-minute buckets, so the effective limit is up to %dx the configured one. "
-            "Pass --redis-url (or set Config.rate_limit_store: redis) to share them.",
+            "serving with %d workers but the rate limiter is in-process: each worker enforces "
+            "its own per-minute buckets, so the effective limit is up to %dx the configured one; "
+            "pass --redis-url or set Config.rate_limit_store: redis to share them",
             workers,
             workers,
         )
@@ -273,7 +273,7 @@ def _serve_client(args: argparse.Namespace) -> Client:
     elif env_key := os.environ.get("HORASIS_API_KEY"):
         validator.register_simple(env_key, principal_id="env", tier=Tier.ENTERPRISE)
     else:
-        raise HorasisError("No API keys configured: pass --keys-file or set HORASIS_API_KEY")
+        raise HorasisError("no API keys configured: pass --keys-file or set HORASIS_API_KEY")
     update: dict[str, Any] = {"device": args.device}
     extra: dict[str, Any] = {}
     if args.redis_url:
@@ -292,7 +292,7 @@ SERVE_ARGV_ENV = "HORASIS_SERVE_ARGV"
 
 
 def worker_app() -> Any:
-    """uvicorn app factory: each worker process rebuilds the client from the serve arguments."""
+    """Build the app in a uvicorn worker from the serve arguments."""
     from horasis.server import create_app
 
     argv = json.loads(os.environ[SERVE_ARGV_ENV])
@@ -305,7 +305,7 @@ def _cmd_serve(args: argparse.Namespace, out: Callable[[str], None], argv: Seque
 
         from horasis.server import create_app
     except ImportError:
-        raise HorasisError("`horasis serve` needs: pip install 'horasis[server]'") from None
+        raise HorasisError("`horasis serve` needs the server extra: pip install 'horasis[server]'") from None
     client = _serve_client(args)
     out(f"serving on http://{args.host}:{args.port}")
     if args.workers > 1:
@@ -323,7 +323,7 @@ def _cmd_serve(args: argparse.Namespace, out: Callable[[str], None], argv: Seque
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Entry point. Returns the process exit code (0 ok, 1 error, 2 bad usage)."""
+    """Run the CLI and return the exit code: 0 ok, 1 error, 2 bad usage."""
     args = build_parser().parse_args(argv)
     try:
         if args.command in COMMANDS:

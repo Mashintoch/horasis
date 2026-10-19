@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 def _to_video(video: str | Path | bytes | Video) -> Video:
-    """Normalize any accepted video input into a `Video`."""
+    """Convert any accepted video input into a `Video`."""
     if isinstance(video, Video):
         return video
     if isinstance(video, bytes):
@@ -54,18 +54,18 @@ def _to_video(video: str | Path | bytes | Video) -> Video:
         return Video.from_source(video)
     if isinstance(video, Path):
         return Video.from_path(video)
-    raise ValidationError(f"Unsupported video input type: {type(video).__name__}")
+    raise ValidationError(f"unsupported video input type: {type(video).__name__}")
 
 
 def _describe(image: object) -> str:
-    """Short, safe label for an input (never the pixel data)."""
+    """Return a short label for an input, never its pixel data."""
     if isinstance(image, str | Path):
         return str(image)
     return getattr(image, "source", None) or f"<{type(image).__name__}>"
 
 
 class _Capability:
-    """Shared base for the small, single-purpose public-API classes."""
+    """Base class for the capability classes."""
 
     def __init__(self, *, access: AccessContext, pipeline: Pipeline) -> None:
         self._access = access
@@ -80,11 +80,10 @@ class _Capability:
     ) -> list[BatchItem[Any]]:
         """Run `fn` over `images`; each item succeeds or fails on its own.
 
-        Every item goes through the full access path, so quota and rate
-        limits are charged per item, but only after the item passes input
-        validation -- items that fail it are not charged. An invalid API key aborts the whole
-        batch (it would fail identically for every item); anything else
-        that is a `HorasisError` is recorded on that item and the batch goes on.
+        Quota and rate limits are charged per item, after the item passes input
+        validation, so invalid items cost nothing. An invalid API key aborts the
+        batch, since every item would fail the same way. Any other `HorasisError`
+        is recorded on its item and the batch continues.
         """
         items: list[BatchItem[Any]] = []
         for index, image in enumerate(images):
@@ -100,7 +99,7 @@ class _Capability:
 
 
 class ObjectDetector(_Capability):
-    """Public API for object detection."""
+    """Object detection."""
 
     @requires_access(Task.DETECT)
     def detect(
@@ -115,19 +114,12 @@ class ObjectDetector(_Capability):
         """Detect objects in `image`.
 
         Args:
-            image: A file path, raw bytes, or a pre-built `Image`.
-            api_key: Caller's `horasis` API key.
-            backend: Optional explicit backend name to use.
-            estimate_demographics: If True, every detection labeled
-                `"person"` also gets a `face_estimate` (rough, model-based
-                age and gender estimate) attached. Off by default -- opt in
-                per call. Requires the optional `demographics` extra:
-                `pip install horasis[demographics]`. These are statistical
-                estimates with real error rates, not verified facts; treat
-                them accordingly.
-
-        Returns:
-            A `DetectionResult` listing every detected object instance.
+            image: A file path, raw bytes or an `Image`.
+            backend: Backend name to use instead of the configured routing.
+            estimate_demographics: Attach a `face_estimate` (model-estimated age
+                and gender) to every ``"person"`` detection. Needs the
+                ``demographics`` extra. The estimates have real error rates and
+                are not facts about anyone.
         """
         result = self._pipeline.run(
             Task.DETECT,
@@ -151,47 +143,29 @@ class ObjectDetector(_Capability):
         output_path: str | Path | None = None,
         **viz_options: object,
     ) -> tuple[DetectionResult, object]:
-        """Detect objects in `image` and return an annotated copy in one call.
+        """Detect objects in `image` and return the result with an annotated copy.
 
-        Equivalent to calling `detect()` then `result.annotate()` yourself,
-        except `image` is only loaded/fetched once and reused for both
-        steps -- so a URL is only downloaded a single time, not twice.
+        Same as `detect` followed by `result.annotate`, except `image` is loaded
+        once, so a URL is downloaded only once.
 
         Args:
-            image: A file path, URL, raw bytes, or a pre-built `Image`.
-            api_key: Caller's `horasis` API key.
-            backend: Optional explicit backend name to use for detection.
-            show_labels: Draw each detection's class label on the image.
-            show_confidence: Draw each detection's confidence score on the image.
-            output_path: If given, also save the annotated image to this path
-                (e.g. `"bus_annotated.jpg"`).
-            **viz_options: Additional drawing options, forwarded to
-                `DetectionResult.annotate()` -> `horasis.viz.render_detections()`.
-                Accepted keys:
-                    - box_color (tuple[int, int, int]): fixed RGB color for
-                      every box. If omitted, each label gets its own
-                      deterministic color so classes stay visually distinct.
-                    - text_color (tuple[int, int, int]): RGB color for the
-                      label/confidence caption text. Defaults to white.
-                    - line_width (int): box border thickness in pixels.
-                      Defaults to 3.
-                    - font_size (int): caption font size in points.
-                      Defaults to 16.
+            image: A file path, URL, raw bytes or an `Image`.
+            backend: Backend name to use for detection.
+            output_path: Also save the annotated image here.
+            **viz_options: Drawing options for `horasis.viz.render_detections`:
+                ``box_color`` (RGB tuple; default is a fixed colour per label),
+                ``text_color`` (RGB tuple, default white), ``line_width``
+                (pixels, default 3) and ``font_size`` (points, default 16).
 
         Returns:
-            A `(result, annotated_image)` tuple:
-                - `result`: the `DetectionResult`, with the raw list of
-                  detections (label, confidence, box) if you need the data
-                  as well as the picture.
-                - `annotated_image`: a `PIL.Image.Image` with boxes and
-                  (optionally) labels/confidence drawn on it.
+            ``(result, annotated_image)``, where ``annotated_image`` is a
+            ``PIL.Image.Image``.
 
         Raises:
-            VisualizationUnavailableError: if Pillow is not installed.
-                Install it with: pip install 'horasis[viz]'
+            VisualizationUnavailableError: if Pillow is missing.
         """
         img = to_image(image, self._access.config.inputs)
-        # `@requires_access` injects the `api_key` keyword; the decorated signature does not declare it.
+        # requires_access consumes api_key, which detect's own signature does not declare
         result = self.detect(  # type: ignore[call-arg]
             img, api_key=api_key, backend=backend, estimate_demographics=estimate_demographics
         )
@@ -218,35 +192,24 @@ class ObjectDetector(_Capability):
         output_paths: Sequence[str | Path] | None = None,
         **viz_options: object,
     ) -> list[tuple[DetectionResult, object]]:
-        """Run `detect_and_annotate` over each image in `images`, in order.
+        """Run `detect_and_annotate` on each of `images`, in order.
+
+        Each image costs one detection call. An error stops the batch and
+        propagates; results collected so far are lost.
 
         Args:
-            images: Any mix of file paths, URLs, raw bytes, or `Image`.
-            output_dir: Directory to save annotated images into. Used with
-                `filenames` if given, otherwise falls back to auto-numbered
-                names (`annotated_0.jpg`, `annotated_1.jpg`, ...).
-            filenames: Exact filenames (not full paths) to use inside
-                `output_dir`, one per image, in order -- e.g. pass your own
-                database IDs: `[f"{record.id}.jpg" for record in records]`.
-                Must be the same length as `images`. Ignored if
-                `output_paths` is given.
-            output_paths: Full explicit paths, one per image, in order --
-                takes precedence over `output_dir`/`filenames` and can point
-                anywhere (not just inside a single directory). Must be the
-                same length as `images`.
-            **viz_options: Additional drawing options applied to every image
-                in the batch. See `detect_and_annotate()` for the accepted
-                keys (`box_color`, `text_color`, `line_width`, `font_size`).
+            images: Any mix of file paths, URLs, raw bytes or `Image`.
+            output_dir: Directory for the annotated images, named from
+                `filenames` or else ``annotated_0.jpg``, ``annotated_1.jpg``, ...
+            filenames: File names inside `output_dir`, one per image. Ignored
+                when `output_paths` is given.
+            output_paths: Full paths, one per image. Overrides `output_dir` and
+                `filenames`.
+            **viz_options: Drawing options for every image; see
+                `detect_and_annotate`.
 
         Returns:
-            One `(result, annotated_image)` pair per input image, in order.
-
-        Note:
-            Each image consumes one unit of quota (same as calling `detect`
-            that many times individually). If a `QuotaExceededError` or any
-            other error is raised partway through, the exception propagates
-            immediately and results already collected are lost -- this does
-            not attempt partial-batch recovery.
+            One ``(result, annotated_image)`` pair per image.
         """
         if output_paths is not None and len(output_paths) != len(images):
             raise ValidationError("output_paths must be the same length as images")
@@ -288,38 +251,25 @@ class ObjectDetector(_Capability):
         estimate_demographics: bool = False,
         principal: Principal | None = None,
     ) -> VideoDetectionResult:
-        """Detect objects across a video, frame by frame.
+        """Detect objects in a video, frame by frame.
 
-        Consumes one unit of quota per call, regardless of how many frames
-        the video contains -- not one unit per frame.
+        One call costs one detection unit, however many frames the video has.
 
         Args:
-            video: A local file path, URL, raw bytes, or a pre-built `Video`.
-                URLs are streamed directly by the backend rather than
-                downloaded up front (videos can be large).
-            backend: Optional explicit backend name to use.
-            sample_every_n_frames: Only run inference on every Nth frame
-                (1 = every frame, 2 = every other frame, etc.) -- a simple
-                way to trade detail for speed on long videos.
-            estimate_demographics: If True, every detection labeled
-                `"person"` on a processed frame also gets a `face_estimate`
-                attached (see `ObjectDetector.detect`). Off by default.
-                This only runs on frames already selected by
-                `sample_every_n_frames` -- it does not add its own
-                sampling, but it does add real per-person cost on top of
-                detection, so a higher `sample_every_n_frames` matters even
-                more with this on. Requires the optional `demographics`
-                extra: `pip install horasis[demographics]`.
+            video: A local path, URL, raw bytes or a `Video`. URLs are streamed
+                by the backend, not downloaded first.
+            backend: Backend name to use instead of the configured routing.
+            sample_every_n_frames: Run inference on every Nth frame only.
+            estimate_demographics: As in `detect`, for the sampled frames only.
+                Adds a per-person cost on top of detection.
 
         Returns:
-            A `VideoDetectionResult` with one `FrameDetections` per
-            processed frame, in order.
+            A `VideoDetectionResult` with one `FrameDetections` per processed
+            frame.
 
         Raises:
-            BackendUnavailableError: if the resolved backend does not
-                support video for this task (the default Ultralytics
-                backend currently only supports video for detection, not
-                classification, OCR, face, or moderation).
+            BackendUnavailableError: if the backend does not support video for
+                this task. The Ultralytics backend supports it for detection only.
         """
         vid = _to_video(video)
         result = self._pipeline.run_video(
@@ -349,51 +299,32 @@ class ObjectDetector(_Capability):
         estimate_demographics: bool = False,
         principal: Principal | None = None,
     ) -> tuple[VideoDetectionResult, Path]:
-        """Detect and annotate a video in a single decode pass.
+        """Detect objects in a video and write an annotated copy in one decode pass.
 
-        Unlike calling `detect_video()` then `VideoDetectionResult.annotate()`
-        separately -- which decodes (or downloads, for a URL) the video
-        *twice* -- this reuses the same frame the backend already decoded
-        internally while running inference, so the video is only ever
-        decoded once. For a remote URL, this also means only one fetch
-        instead of two.
-
-        Consumes one unit of quota, same as `detect_video`.
+        `detect_video` followed by `VideoDetectionResult.annotate` decodes (or,
+        for a URL, downloads) the video twice; this reuses each decoded frame.
+        Costs one detection unit, like `detect_video`.
 
         Args:
-            video: A local path, URL, raw bytes, or `Video`.
-            output_path: Where to write the annotated video (e.g. `"out.mp4"`).
-            backend: Optional explicit backend name to use.
-            sample_every_n_frames: Only run inference on every Nth frame
-                (1 = every frame, 2 = every other frame, etc.).
-            show_labels: Draw each detection's class label.
-            show_confidence: Draw each detection's confidence score.
-            box_color: Fixed RGB color for every box; if omitted, derived
-                per label, same as `render_detections`.
-            text_color: RGB color for the caption text.
+            video: A local path, URL, raw bytes or a `Video`.
+            output_path: Where to write the annotated video, e.g. ``"out.mp4"``.
+            backend: Backend name to use instead of the configured routing.
+            sample_every_n_frames: Run inference on every Nth frame only.
+            box_color: Fixed RGB colour for every box; default is one per label.
+            text_color: RGB colour for the caption text.
             line_width: Box border thickness in pixels.
             font_size: Caption font size in points.
-            estimate_demographics: If True, every detection labeled
-                `"person"` on a processed frame also gets a `face_estimate`
-                attached (see `ObjectDetector.detect`). Off by default.
-                Note this attaches the estimate to the returned data but
-                does not currently draw it on the annotated video -- the
-                box/label/confidence drawing is unaffected. Requires the
-                optional `demographics` extra:
-                `pip install horasis[demographics]`.
+            estimate_demographics: As in `detect`. The estimates are returned in
+                the result but not drawn.
 
         Returns:
-            A `(result, output_path)` tuple: the `VideoDetectionResult`
-            with the raw per-frame detection data, and the path to the
-            written annotated video file.
+            ``(result, output_path)``.
 
         Raises:
-            VisualizationUnavailableError: if Pillow or
-                opencv-python-headless is not installed.
-                Install both with: pip install 'horasis[viz]'
-            BackendUnavailableError: if the resolved backend does not
-                support the combined single-pass operation for this task
-                (the default Ultralytics backend does, for detection).
+            VisualizationUnavailableError: if Pillow or OpenCV is missing
+                (``pip install 'horasis[viz]'``).
+            BackendUnavailableError: if the backend does not support the combined
+                operation for this task.
         """
         vid = _to_video(video)
         result, out_path = self._pipeline.run_video_and_annotate(
@@ -421,10 +352,10 @@ class ObjectDetector(_Capability):
         backend: str | None = None,
         estimate_demographics: bool = False,
     ) -> list[BatchItem[DetectionResult]]:
-        """Detect objects in each of `images`, with a result or error per item.
+        """Detect objects in each of `images`, with a result or an error per item.
 
-        Quota (and rate limits) are charged per item. Results come back in
-        input order; failed items have ``item.error`` set instead of raising.
+        Quota and rate limits are charged per item. Failed items have
+        ``item.error`` set instead of raising.
         """
         return self._run_batch(
             self.detect,
@@ -443,26 +374,27 @@ class ObjectDetector(_Capability):
         max_frames: int | None = None,
         backend: str | None = None,
     ) -> Iterator[FrameResult]:
-        """Detect objects frame by frame in a video file or a webcam.
+        """Detect objects frame by frame in a video file or from a camera.
+
+        Needs the ``video`` extra.
 
         Args:
-            source: Video file path, or an ``int`` camera index. ``http(s)``
-                URLs need ``Config.inputs.allow_urls``.
-            api_key: Caller's API key. **Each processed frame is charged as one
-                detection call**, so a quota or rate error ends the stream.
-            every_n_frames: Process one frame out of every N (1 = all).
-            max_frames: Stop after this many processed frames (a webcam never
-                ends by itself; you can also just stop iterating).
-            backend: Optional explicit backend name.
+            source: A video file path or an ``int`` camera index. http(s) URLs
+                need ``Config.inputs.allow_urls``.
+            api_key: Each processed frame is charged as one detection call, so a
+                quota or rate error ends the stream.
+            every_n_frames: Process one frame out of every N.
+            max_frames: Stop after this many processed frames. A camera never
+                ends by itself.
+            backend: Backend name to use instead of the configured routing.
 
         Yields:
-            A :class:`FrameResult` per processed frame. Requires the optional
-            ``video`` extra (``pip install 'horasis[video]'``).
+            A :class:`FrameResult` per processed frame.
         """
         is_url = isinstance(source, str) and source.startswith(("http://", "https://"))
         if is_url and not self._access.config.inputs.allow_urls:
             raise ValidationError(
-                "URL video sources are disabled; set Config.inputs.allow_urls=True to opt in"
+                "URL video sources are disabled; set Config.inputs.allow_urls=True"
             )
         policy = self._access.config.inputs
         for index, stamp, rgb in iter_frames(
@@ -475,7 +407,7 @@ class ObjectDetector(_Capability):
 
 
 class ImageClassifier(_Capability):
-    """Public API for whole-image classification."""
+    """Whole-image classification."""
 
     @requires_access(Task.CLASSIFY)
     def classify(
@@ -486,7 +418,7 @@ class ImageClassifier(_Capability):
         options: Mapping[str, Any] | None = None,
         principal: Principal | None = None,
     ) -> ClassificationResult:
-        """Classify `image`, returning ranked label/confidence entries."""
+        """Classify `image` into ranked label and confidence entries."""
         result = self._pipeline.run(
             Task.CLASSIFY,
             to_image(image, self._access.config.inputs),
@@ -499,12 +431,12 @@ class ImageClassifier(_Capability):
     def classify_batch(
         self, images: Sequence[ImageInput], *, api_key: str, backend: str | None = None
     ) -> list[BatchItem[ClassificationResult]]:
-        """Classify each of `images`; a result or error per item, quota charged per item."""
+        """Classify each of `images`, with a result or an error per item."""
         return self._run_batch(self.classify, images, api_key, backend=backend)
 
 
 class TextExtractor(_Capability):
-    """Public API for OCR / text extraction."""
+    """OCR."""
 
     @requires_access(Task.OCR)
     def extract_text(
@@ -515,7 +447,7 @@ class TextExtractor(_Capability):
         options: Mapping[str, Any] | None = None,
         principal: Principal | None = None,
     ) -> OcrResult:
-        """Extract text from `image` as a sequence of recognized regions."""
+        """Extract the text regions in `image`."""
         result = self._pipeline.run(
             Task.OCR,
             to_image(image, self._access.config.inputs),
@@ -528,12 +460,12 @@ class TextExtractor(_Capability):
     def extract_text_batch(
         self, images: Sequence[ImageInput], *, api_key: str, backend: str | None = None
     ) -> list[BatchItem[OcrResult]]:
-        """OCR each of `images`; a result or error per item, quota charged per item."""
+        """Run OCR on each of `images`, with a result or an error per item."""
         return self._run_batch(self.extract_text, images, api_key, backend=backend)
 
 
 class FaceDetector(_Capability):
-    """Public API for face detection."""
+    """Face detection."""
 
     @requires_access(Task.FACE)
     def detect_faces(
@@ -557,12 +489,12 @@ class FaceDetector(_Capability):
     def detect_faces_batch(
         self, images: Sequence[ImageInput], *, api_key: str, backend: str | None = None
     ) -> list[BatchItem[FaceResult]]:
-        """Detect faces in each of `images`; a result or error per item, charged per item."""
+        """Detect faces in each of `images`, with a result or an error per item."""
         return self._run_batch(self.detect_faces, images, api_key, backend=backend)
 
 
 class ContentModerator(_Capability):
-    """Public API for content moderation."""
+    """Content moderation."""
 
     @requires_access(Task.MODERATE)
     def moderate(
@@ -586,12 +518,12 @@ class ContentModerator(_Capability):
     def moderate_batch(
         self, images: Sequence[ImageInput], *, api_key: str, backend: str | None = None
     ) -> list[BatchItem[ModerationResult]]:
-        """Moderate each of `images`; a result or error per item, charged per item."""
+        """Moderate each of `images`, with a result or an error per item."""
         return self._run_batch(self.moderate, images, api_key, backend=backend)
 
 
 class ObjectSegmenter(_Capability):
-    """Public API for instance segmentation (boxes plus mask outlines)."""
+    """Instance segmentation (boxes and mask outlines)."""
 
     @requires_access(Task.SEGMENT)
     def segment(
@@ -615,12 +547,12 @@ class ObjectSegmenter(_Capability):
     def segment_batch(
         self, images: Sequence[ImageInput], *, api_key: str, backend: str | None = None
     ) -> list[BatchItem[SegmentationResult]]:
-        """Segment each of `images`; a result or error per item, charged per item."""
+        """Segment each of `images`, with a result or an error per item."""
         return self._run_batch(self.segment, images, api_key, backend=backend)
 
 
 class PoseEstimator(_Capability):
-    """Public API for human pose estimation (body keypoints)."""
+    """Human pose estimation (body keypoints)."""
 
     @requires_access(Task.POSE)
     def estimate(
@@ -644,12 +576,12 @@ class PoseEstimator(_Capability):
     def estimate_batch(
         self, images: Sequence[ImageInput], *, api_key: str, backend: str | None = None
     ) -> list[BatchItem[PoseResult]]:
-        """Estimate poses in each of `images`; a result or error per item, charged per item."""
+        """Estimate poses in each of `images`, with a result or an error per item."""
         return self._run_batch(self.estimate, images, api_key, backend=backend)
 
 
 class Client:
-    """The `horasis` client. Construct one and call its capability attributes.
+    """The horasis client. Build one and call its capability attributes.
 
     Example:
         >>> validator = InMemoryApiKeyValidator()
@@ -707,7 +639,7 @@ class Client:
 
     @property
     def hooks(self) -> Hooks:
-        """Pipeline hooks; attach logging/timing or your own (see `horasis.orchestration`)."""
+        """Pipeline hooks; see `horasis.orchestration` for the built-in ones."""
         return self._hooks
 
     def warmup(self, backends: Sequence[str] | None = None) -> list[str]:
@@ -715,11 +647,11 @@ class Client:
 
         Args:
             backends: Names to warm. If omitted, every registered backend is
-                tried and those whose dependencies/models are missing are skipped
-                (logged); if you name a backend, its failure is raised.
+                tried and those with missing dependencies or models are skipped
+                and logged. A named backend that fails raises.
 
         Returns:
-            Names of the backends that were warmed.
+            Names of the backends warmed.
         """
         warmed: list[str] = []
         for name in backends if backends is not None else self._registry.names():
@@ -736,10 +668,10 @@ class Client:
         return warmed
 
     def usage(self, api_key: str) -> UsageReport:
-        """Report what `api_key` has used and has left (consumes nothing).
+        """Report what `api_key` has used and has left, without charging anything.
 
         Raises:
-            InvalidApiKeyError: (or Expired/Revoked) if the key is not valid.
+            InvalidApiKeyError: or a subclass, if the key is not valid.
         """
         principal = self._access.validator.validate(api_key)
         return self._access.usage(principal)
@@ -768,25 +700,21 @@ class Client:
         rate_limiter: RateLimiter | None = None,
         hooks: Hooks | None = None,
     ) -> Client:
-        """Convenience constructor wiring up the default Ultralytics backend.
+        """Build a client with the default Ultralytics backend registered.
 
         Args:
-            config: Configuration; defaults to `Config.default()`.
-            validator: API key validator; defaults to an empty in-memory
-                validator (register keys via the returned client's
-                `_validator`, or supply your own production validator).
-            telemetry: Telemetry sink; defaults to a no-op.
-            quota_store: Where quota counters live (default in-memory; use
-                `SQLiteQuotaStore` or `RedisQuotaStore` to share/persist them).
-            rate_limiter: Per-minute rate limiter; defaults to the in-process
-                token bucket, or a `RedisRateLimiter` when
-                ``Config.rate_limit_store == "redis"`` (it reuses the Redis client of
-                a `RedisQuotaStore` passed as `quota_store`). Use
-                `horasis.access.redis_backends()` to share one client explicitly.
-            backends: Extra `Backend` backends to register after Ultralytics
-                (e.g. `EasyOCRAdapter()`, `YuNetFaceAdapter(model_path=...)`).
-                Route to them with `Config.backend_order`, or per call with
-                `backend="name"`.
+            config: Defaults to `Config.default()`.
+            validator: Defaults to an empty `InMemoryApiKeyValidator`.
+            telemetry: Defaults to a no-op sink.
+            quota_store: Defaults to in-memory. Use `SQLiteQuotaStore` or
+                `RedisQuotaStore` to share or persist counters.
+            rate_limiter: Defaults to the in-process token bucket, or to a
+                `RedisRateLimiter` when ``Config.rate_limit_store == "redis"``
+                (reusing the client of a `RedisQuotaStore` passed as
+                `quota_store`). `horasis.access.redis_backends()` builds both
+                on one client.
+            backends: Extra backends to register after Ultralytics. Route to them
+                with `Config.backend_order` or per call with ``backend="name"``.
         """
         config = config or Config.default()
         validator = validator or InMemoryApiKeyValidator()
@@ -794,7 +722,7 @@ class Client:
             shared_client = getattr(quota_store, "client", None)
             if shared_client is None and not config.redis_url:
                 raise ConfigurationError(
-                    "Config.rate_limit_store is 'redis' but no redis_url (or Redis quota store) was given"
+                    "Config.rate_limit_store is 'redis' but no redis_url or Redis quota store was given"
                 )
             rate_limiter = (
                 RedisRateLimiter(shared_client)

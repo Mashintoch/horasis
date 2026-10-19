@@ -1,9 +1,8 @@
-"""AsyncClient -- the asyncio face of the client.
+"""Asyncio client.
 
-Backends are blocking (model inference, HTTP), so every call is run on a
-thread pool and awaited; the event loop is never blocked. Access control,
-quotas and hooks behave exactly as in the synchronous :class:`Client`, which
-this class wraps.
+Backends block (model inference, HTTP), so each call runs on a thread pool
+and is awaited. Access control, quotas and hooks behave as in the
+synchronous :class:`Client`, which this wraps.
 """
 
 from __future__ import annotations
@@ -53,7 +52,7 @@ class _AsyncBase:
         api_key: str,
         **kwargs: Any,
     ) -> list[BatchItem[Any]]:
-        """Run items concurrently (bounded by the pool); same semantics as the sync batch."""
+        """Run items concurrently, bounded by the pool, with the sync batch semantics."""
 
         async def one(index: int, image: ImageInput) -> BatchItem[Any]:
             try:
@@ -96,7 +95,7 @@ class AsyncObjectDetector(_AsyncBase):
     async def detect_batch(
         self, images: Sequence[ImageInput], *, api_key: str, backend: str | None = None
     ) -> list[BatchItem[DetectionResult]]:
-        """Async batch; items run concurrently, each with its own result or error."""
+        """Detect objects in each of `images` concurrently, with a result or an error per item."""
         return await self._batch(self._sync.detect, images, api_key, backend=backend)
 
     async def stream(
@@ -245,15 +244,16 @@ class AsyncPoseEstimator(_AsyncBase):
 class AsyncClient:
     """Async client mirroring :class:`Client` (``await client.detection.detect(...)``).
 
-    Args:
-        client: The synchronous client to wrap.
-        max_workers: Thread-pool size = how many blocking inferences may run
-            at once. Defaults to Python's ``ThreadPoolExecutor`` default.
-
-    Use as an async context manager (or call :meth:`close`) to shut the pool down::
+    Use it as an async context manager, or call :meth:`close`, to shut the
+    pool down::
 
         async with AsyncClient.build(validator=validator) as client:
             result = await client.detection.detect("photo.jpg", api_key=key)
+
+    Args:
+        client: The synchronous client to wrap.
+        max_workers: How many blocking inferences may run at once. Defaults
+            to the ``ThreadPoolExecutor`` default.
     """
 
     def __init__(self, client: Client, *, max_workers: int | None = None) -> None:
@@ -269,12 +269,12 @@ class AsyncClient:
 
     @classmethod
     def build(cls, *, max_workers: int | None = None, **build_kwargs: Any) -> AsyncClient:
-        """Like :meth:`Client.build`; extra keyword arguments are forwarded to it."""
+        """Build the wrapped client with :meth:`Client.build`, passing keyword arguments on."""
         return cls(Client.build(**build_kwargs), max_workers=max_workers)
 
     @property
     def sync(self) -> Client:
-        """The wrapped synchronous client (hooks, registry, config...)."""
+        """The wrapped synchronous client."""
         return self._client
 
     async def usage(self, api_key: str) -> UsageReport:
@@ -284,7 +284,7 @@ class AsyncClient:
         return report
 
     async def warmup(self, backends: Sequence[str] | None = None) -> list[str]:
-        """Async :meth:`Client.warmup` -- load models without blocking the loop."""
+        """Async :meth:`Client.warmup`."""
         warmed: list[str] = await asyncio.get_running_loop().run_in_executor(
             self._executor, self._client.warmup, backends
         )
