@@ -1,6 +1,4 @@
-"""Contract tests: assert the public API boundary's shape and guarantees,
-independent of which backend actually serves a request.
-"""
+"""Public API contract, independent of the backend serving the request."""
 
 from __future__ import annotations
 
@@ -77,7 +75,6 @@ def test_free_tier_cannot_reach_ocr(client: Client, sample_image) -> None:
 
 
 def test_public_api_never_leaks_backend_types(client: Client, sample_image) -> None:
-    """Callers get `Result` subclasses back, never a raw `Backend` or backend object."""
     result = client.detection.detect(sample_image, api_key="pro-key")
     assert not hasattr(result, "infer")  # not a Backend
     assert result.backend == "fake"  # backend identity is just a string field

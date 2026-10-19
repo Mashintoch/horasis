@@ -41,7 +41,7 @@ class FakeReader:
         return self.rows
 
 
-# ---- OCR -------------------------------------------------------------------
+# OCR
 
 
 def test_easyocr_returns_regions_with_polygon_and_lines() -> None:
@@ -132,7 +132,7 @@ def test_order_into_lines_handles_empty_and_single() -> None:
     assert order_into_lines([box], lambda b: b) == [(0, box)]
 
 
-# ---- Faces -----------------------------------------------------------------
+# Faces
 
 
 class FakeYuNet:
@@ -190,7 +190,7 @@ def test_face_adapter_missing_model_is_actionable(monkeypatch: pytest.MonkeyPatc
         YuNetFaceAdapter(model_path="/no/such/model.onnx").infer(Task.FACE, IMAGE)
 
 
-# ---- Moderation ------------------------------------------------------------
+# Moderation
 
 
 def _classifier(scores: dict[str, float]) -> Any:

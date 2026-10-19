@@ -1,5 +1,7 @@
-"""Tests for the viz helpers, video rendering, annotate() and the merged
-Ultralytics demographics/video code. Everything is faked: no models, no network."""
+"""Viz helpers, video rendering, annotate() and Ultralytics demographics and video.
+
+Everything is faked: no models, no network.
+"""
 
 from __future__ import annotations
 
@@ -73,7 +75,7 @@ def avi_path(tmp_path: Path) -> Path:
     return path
 
 
-# ---- image drawing -----------------------------------------------------------------
+# Image drawing
 
 
 def _green(img: PILImage.Image) -> int:
@@ -138,7 +140,7 @@ def test_open_image_rejects_bad_input() -> None:
         viz._open_image(12345)
 
 
-# ---- video rendering --------------------------------------------------------------------
+# Video rendering
 
 
 def test_open_video_writer_picks_ffmpeg_only_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -258,7 +260,7 @@ def test_api_key_validator_protocol_stub_is_abstract() -> None:
         ApiKeyValidator.validate(object(), "key")  # type: ignore[arg-type]
 
 
-# ---- merged Ultralytics code: demographics + video ---------------------------------------
+# Ultralytics demographics and video
 
 
 def _box(cls: int, conf: float, xyxy: list[float]) -> Any:

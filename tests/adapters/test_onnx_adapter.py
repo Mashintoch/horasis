@@ -129,7 +129,6 @@ def test_detect_yolov5_and_end_to_end_layouts() -> None:
     v5 = np.array([[[32, 32, 32, 16, 0.5, 0.0, 1.0], [5, 5, 2, 2, 0.1, 1.0, 0.0]]], dtype=np.float32)
     result = _adapter(v5, output_format="yolov5").infer(Task.DETECT, IMAGE)
     assert [(d.label, round(float(d.confidence), 2)) for d in result.detections] == [("dog", 0.5)]  # type: ignore[attr-defined]
-    # auto-detected as v5: N rows (2) < C... but rows > cols check uses shape[0] < shape[1]
     # End-to-end (1, N, 6): [x1, y1, x2, y2, score, cls] in letterboxed space.
     e2e = np.array([[[16, 24, 48, 40, 0.9, 1.0], [0, 0, 5, 5, 0.1, 0.0]]], dtype=np.float32)
     result = _adapter(e2e, output_format="nms").infer(Task.DETECT, IMAGE)
@@ -215,7 +214,7 @@ def test_runtime_failures_are_wrapped() -> None:
         OnnxAdapter(model_path="m.onnx", session=Broken(np.zeros(1))).infer(Task.DETECT, IMAGE)
 
 
-# ---- labels sidecar --------------------------------------------------------
+# Labels sidecar
 
 
 def test_labels_txt_sidecar_discovered(tmp_path: Path) -> None:
@@ -248,7 +247,7 @@ def test_adapter_uses_sidecar_and_falls_back_to_ids(tmp_path: Path) -> None:
     assert [d.label for d in adapter.infer(Task.DETECT, IMAGE).detections] == ["cat", "1"]  # type: ignore[attr-defined]
 
 
-# ---- providers / session creation -----------------------------------------
+# Providers and session creation
 
 
 @pytest.fixture

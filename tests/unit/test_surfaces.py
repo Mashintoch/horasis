@@ -101,7 +101,7 @@ def post(http: TestClient, task: str, key: str | None = "good", **form: str) -> 
     )
 
 
-# ---- server --------------------------------------------------------------------
+# Server
 
 
 def test_health_lists_backends_without_auth(served: Any) -> None:
@@ -210,7 +210,7 @@ def test_parse_options_accepts_empty_and_valid() -> None:
         parse_options("detect", '{"max_det": true}')  # bool is not an int here
 
 
-# ---- remote adapter <-> server ------------------------------------------------------------
+# Remote adapter against the server
 
 
 def test_remote_adapter_talks_to_the_server() -> None:
@@ -256,7 +256,7 @@ def test_remote_adapter_maps_server_errors_back_to_exceptions() -> None:
     assert info.value.limit == 60 and info.value.retry_after is not None
 
 
-# ---- CLI -----------------------------------------------------------------------------------------
+# CLI
 
 
 @pytest.fixture

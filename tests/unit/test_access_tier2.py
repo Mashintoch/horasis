@@ -71,7 +71,7 @@ def quota_manager(request: pytest.FixtureRequest, tmp_path: Path) -> QuotaManage
     return QuotaManager(RedisQuotaStore(FakeRedis()))
 
 
-# ---- stores / QuotaManager ---------------------------------------------------
+# Quota stores and QuotaManager
 
 
 def test_weighted_consume_and_denial_refund(quota_manager: QuotaManager) -> None:
@@ -144,7 +144,7 @@ def test_redis_store_sets_expiry_and_missing_dependency(monkeypatch: pytest.Monk
         RedisQuotaStore()
 
 
-# ---- token bucket ------------------------------------------------------
+# Token bucket
 
 
 class Clock:
@@ -193,7 +193,7 @@ def test_token_bucket_weighted_cost_per_task_and_never_case() -> None:
     assert never.value.retry_after is None
 
 
-# ---- API keys ----------------------------------------------------------
+# API keys
 
 
 def test_hashed_keys_store_no_plaintext_and_validate() -> None:
@@ -239,7 +239,7 @@ def test_hashed_keys_survive_export_and_load() -> None:
     assert restored.validate(key).scopes == ["ocr"]
 
 
-# ---- end to end through Client ----------------------------------------
+# End to end through Client
 
 
 def _client(validator: Any, **tier_kwargs: Any) -> Client:

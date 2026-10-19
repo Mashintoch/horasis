@@ -1,4 +1,4 @@
-"""Stream detections from a video file or webcam (each processed frame is billed).
+"""Stream detections from a video file or webcam. Each processed frame is billed.
 
     pip install 'horasis[video]'
     python examples/stream_video.py clip.mp4      # a file

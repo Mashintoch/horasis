@@ -16,7 +16,7 @@ from horasis.foundation.schemas import Task
 
 
 class Widget:
-    """A minimal object exercising `@requires_access` without any orchestration."""
+    """Minimal object guarded by `@requires_access`, without orchestration."""
 
     def __init__(self, access: AccessContext) -> None:
         self._access = access

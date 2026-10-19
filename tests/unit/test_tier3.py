@@ -64,7 +64,7 @@ def result_with(*dets: Detection) -> DetectionResult:
     return DetectionResult(backend="fake", latency_ms=1.0, detections=list(dets))
 
 
-# ---- result utilities ------------------------------------------------------
+# Result utilities
 
 
 def test_to_dict_and_to_json_round_trip() -> None:
@@ -170,7 +170,7 @@ def test_draw_returns_image_without_saving(tmp_path: Path, monkeypatch: pytest.M
     assert list(tmp_path.iterdir()) == []  # no annotated.png side effect
 
 
-# ---- Hooks -----------------------------------------------------------
+# Hooks
 
 
 def _pipeline(backend: FakeBackend | None = None, hooks: Hooks | None = None) -> Pipeline:
@@ -270,7 +270,7 @@ def test_timing_hook_records_and_summarises() -> None:
     assert timing.records == []
 
 
-# ---- client fixtures --------------------------------------------------------
+# Client fixtures
 
 
 def make_client(limit: int = 100, backends: list[FakeBackend] | None = None, **config_kw: Any) -> Client:
@@ -288,7 +288,7 @@ def make_client(limit: int = 100, backends: list[FakeBackend] | None = None, **c
     return Client(config=config, registry=registry, validator=validator)
 
 
-# ---- batching ----------------------------------------------------------------
+# Batching
 
 
 def test_detect_batch_gives_per_item_results_and_errors() -> None:
@@ -352,7 +352,7 @@ def test_batch_items_describe_paths(tmp_path: Path) -> None:
     assert isinstance(items[1].error, ValidationError)
 
 
-# ---- frames / streaming ---------------------------------------------------------
+# Frames and streaming
 
 
 class FakeCapture:
@@ -438,7 +438,7 @@ def test_stream_urls_are_opt_in() -> None:
         next(make_client().detection.stream("https://x.test/v.mp4", api_key="k"))
 
 
-# ---- model lifecycle ----------------------------------------------------------------
+# Model lifecycle
 
 
 class Loadable(FakeBackend):
@@ -514,7 +514,7 @@ def test_warmup_skips_unavailable_but_raises_when_named() -> None:
     assert client.warmup(["good"]) == ["good"]
 
 
-# ---- async ------------------------------------------------------------------------------
+# Async
 
 
 def test_async_client_mirrors_sync() -> None:
@@ -575,7 +575,7 @@ def test_async_batch_runs_items_concurrently_and_stream_iterates(
     asyncio.run(scenario())
 
 
-# ---- OpenTelemetry -------------------------------------------------------------------------
+# OpenTelemetry
 
 
 class FakeSpan:

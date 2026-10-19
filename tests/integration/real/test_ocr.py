@@ -18,7 +18,7 @@ SIZE = (640, 160)
 
 
 def render_text() -> Image.Image:
-    """Deterministic OCR input: black text on white, drawn with Pillow's bundled font."""
+    """Render black text on white with Pillow's bundled font."""
     image = Image.new("RGB", SIZE, "white")
     ImageDraw.Draw(image).text((30, 40), TEXT, fill="black", font=ImageFont.load_default(size=56))
     return image

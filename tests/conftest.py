@@ -28,13 +28,13 @@ from horasis.orchestration.pipeline import Pipeline
 def _isolated_model_cache(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Keep offline tests away from the user's real model cache (integration tests use it)."""
+    """Keep offline tests out of the real model cache, which integration tests use."""
     if request.node.get_closest_marker("integration") is None:
         monkeypatch.setenv("HORASIS_CACHE_DIR", str(tmp_path_factory.mktemp("model-cache")))
 
 
 def png_bytes(width: int = 8, height: int = 6, color: tuple[int, int, int] = (200, 30, 30)) -> bytes:
-    """A tiny but real PNG, for tests that go through input validation."""
+    """Return a small valid PNG, for tests that go through input validation."""
     buf = io.BytesIO()
     PILImage.new("RGB", (width, height), color).save(buf, format="PNG")
     return buf.getvalue()
@@ -51,7 +51,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 class FakeBackend(Backend):
-    """A deterministic, in-memory `Backend` used across the test suite."""
+    """Deterministic in-memory `Backend` used across the suite."""
 
     def __init__(self, name: str = "fake", tasks: frozenset[Task] | None = None) -> None:
         self.name = name

@@ -17,21 +17,21 @@ KEY = "integration-key"
 
 
 def make_client(*backends: Backend) -> Client:
-    """A `Client` with the real Ultralytics adapter plus `backends` and one enterprise key."""
+    """Return a `Client` with the real Ultralytics adapter, `backends` and one enterprise key."""
     validator = InMemoryApiKeyValidator()
     validator.register_simple(KEY, principal_id="integration", tier=Tier.ENTERPRISE)
     return Client.build(validator=validator, backends=list(backends))
 
 
 def weights(name: str) -> str:
-    """Cache path for a weights file, so Ultralytics downloads it there, not into the cwd."""
+    """Return the cache path for a weights file, so Ultralytics does not download into the cwd."""
     path = models.cache_dir() / "weights" / name
     path.parent.mkdir(parents=True, exist_ok=True)
     return str(path)
 
 
 def sample_image(name: str) -> Path:
-    """An image shipped inside the Ultralytics package (``bus.jpg`` or ``zidane.jpg``)."""
+    """Return an image shipped with Ultralytics (``bus.jpg`` or ``zidane.jpg``)."""
     pytest.importorskip("ultralytics", reason="needs the ultralytics package for its sample images")
     from ultralytics.utils import ASSETS
 
@@ -57,5 +57,5 @@ def assert_box_in_bounds(box: BoundingBox, size: tuple[int, int], tolerance: flo
 
 
 def assert_is_name(label: str) -> None:
-    """A label must be a class name, not a raw index (a classic label-mapping bug)."""
+    """Assert a label is a class name, not a raw index."""
     assert label and not label.strip().isdigit(), f"label looks like a raw index: {label!r}"

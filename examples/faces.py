@@ -1,4 +1,4 @@
-"""Face detection (boxes and landmarks only -- nobody is identified).
+"""Face detection: boxes and landmarks only; nobody is identified.
 
     pip install 'horasis[face]'
     # download face_detection_yunet_2023mar.onnx from the OpenCV Zoo, then:

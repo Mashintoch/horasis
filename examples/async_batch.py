@@ -20,7 +20,7 @@ async def run(client, key, images):
             if item.ok:
                 print(f"{item.source}: {len(item.result.detections)} objects")
             else:
-                print(f"{item.source}: FAILED -- {item.error.message}")
+                print(f"{item.source}: FAILED: {item.error.message}")
         used = (await aclient.usage(key)).overall
         print(f"quota used: {used.used}/{used.limit}")
         return items

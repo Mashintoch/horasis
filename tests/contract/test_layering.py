@@ -7,8 +7,7 @@ from pathlib import Path
 
 import horasis
 
-# Higher number = higher layer. `viz` is a drawing utility that depends only
-# on the foundation, so it sits alongside it.
+# Higher number = higher layer. `viz` imports only from the foundation.
 LAYER_RANK = {
     "foundation": 1,
     "viz": 1,
