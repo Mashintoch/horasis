@@ -60,7 +60,7 @@ def load_labels(model_path: str | Path, labels_path: str | Path | None = None) -
     for path in candidates:
         if not path.is_file():
             if labels_path is not None:
-                raise ConfigurationError(f"Labels file not found: {path}")
+                raise ConfigurationError(f"labels file not found: {path}")
             continue
         try:
             if path.suffix == ".json":
@@ -74,7 +74,7 @@ def load_labels(model_path: str | Path, labels_path: str | Path | None = None) -
                 return [str(x) for x in raw]
             return [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
         except (ValueError, TypeError, OSError) as exc:
-            raise ConfigurationError(f"Could not parse labels file {path}: {exc}") from exc
+            raise ConfigurationError(f"cannot parse labels file {path}: {exc}") from exc
     return []
 
 
@@ -84,7 +84,7 @@ def letterbox(
     """Resize keeping aspect ratio and pad to `size` ``(height, width)``.
 
     Returns:
-        ``(chw_float01, scale, (pad_x, pad_y))`` -- a ``(3, H, W)`` array in
+        ``(chw_float01, scale, (pad_x, pad_y))``: a ``(3, H, W)`` array in
         ``0..1`` plus what is needed to map boxes back to the original image.
     """
     height, width = size
@@ -102,7 +102,7 @@ def letterbox(
 def center_crop_resize(
     image: PILImage.Image, size: tuple[int, int], crop_pct: float = 0.875
 ) -> np.ndarray[Any, Any]:
-    """Classification preprocessing: resize short side, centre-crop, scale to 0..1 (CHW)."""
+    """Resize the short side, centre-crop and scale to 0..1 (CHW) for classification."""
     height, width = size
     short = round(min(height, width) / crop_pct)
     scale = short / min(image.width, image.height)
@@ -118,7 +118,7 @@ def center_crop_resize(
 def nms(
     boxes: np.ndarray[Any, Any], scores: np.ndarray[Any, Any], iou_threshold: float
 ) -> list[int]:
-    """Greedy non-maximum suppression over ``xyxy`` boxes; returns kept indices."""
+    """Run greedy non-maximum suppression over ``xyxy`` boxes; return kept indices."""
     order = scores.argsort()[::-1]
     areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
     keep: list[int] = []
@@ -145,13 +145,13 @@ def softmax(logits: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
 
 
 class OnnxAdapter(Backend):
-    """`Backend` that runs a detection *or* classification ONNX model.
+    """`Backend` that runs a detection or classification ONNX model.
 
-    One instance serves one model/task (register two instances with
-    different names to serve both). Detection supports the common YOLO
-    export layouts -- YOLOv8/11 ``(1, 4+nc, N)``, YOLOv5 ``(1, N, 5+nc)``,
-    and end-to-end ``(1, N, 6)`` with NMS already applied -- selected by
-    `output_format` (``"auto"`` guesses from the shape). Input is NCHW float.
+    One instance serves one model and task; register two instances under
+    different names to serve both. Detection supports the common YOLO export
+    layouts, selected by `output_format` (``"auto"`` guesses from the shape):
+    YOLOv8/11 ``(1, 4+nc, N)``, YOLOv5 ``(1, N, 5+nc)`` and end-to-end
+    ``(1, N, 6)`` with NMS already applied. Input is NCHW float.
 
     Args:
         model_path: Path to the ``.onnx`` file (opened lazily).
@@ -230,8 +230,8 @@ class OnnxAdapter(Backend):
             return ["CPUExecutionProvider"]
         if device == "cuda" and "CUDAExecutionProvider" not in available:
             raise BackendUnavailableError(
-                "device='cuda' requested but CUDAExecutionProvider is unavailable "
-                "(install onnxruntime-gpu and a matching CUDA runtime)"
+                "device='cuda' requested but CUDAExecutionProvider is unavailable; "
+                "install onnxruntime-gpu and a matching CUDA runtime"
             )
         wanted = ["CUDAExecutionProvider", "CPUExecutionProvider"]
         return [p for p in wanted if p in available]
@@ -243,8 +243,7 @@ class OnnxAdapter(Backend):
             import onnxruntime as ort
         except ImportError as exc:
             raise BackendUnavailableError(
-                "The 'onnxruntime' package is required for OnnxAdapter. "
-                "Install it with: pip install 'horasis[onnx]'"
+                "OnnxAdapter needs the onnxruntime package: pip install 'horasis[onnx]'"
             ) from exc
         if not self._model_path.is_file():
             raise BackendUnavailableError(f"ONNX model file not found: {self._model_path}")
@@ -275,7 +274,7 @@ class OnnxAdapter(Backend):
     def _model_input_size(self, session: Any) -> tuple[int, int]:
         shape = session.get_inputs()[0].shape
         if len(shape) != 4 or shape[1] != 3:
-            raise ConfigurationError(f"Expected an NCHW image input (1, 3, H, W); model has {shape}")
+            raise ConfigurationError(f"expected an NCHW image input (1, 3, H, W), model has {shape}")
         h, w = shape[2], shape[3]
         if isinstance(h, int) and isinstance(w, int):
             return h, w

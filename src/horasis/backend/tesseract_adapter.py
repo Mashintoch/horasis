@@ -49,8 +49,8 @@ class TesseractAdapter(Backend):
             import pytesseract
         except ImportError as exc:
             raise BackendUnavailableError(
-                "The 'pytesseract' package is required for TesseractAdapter. "
-                "Install it with: pip install 'horasis[ocr]' (and install the Tesseract binary)"
+                "TesseractAdapter needs the pytesseract package: pip install 'horasis[ocr]' "
+                "(plus the Tesseract binary)"
             ) from exc
         self._engine = pytesseract
         return pytesseract
@@ -95,7 +95,7 @@ class TesseractAdapter(Backend):
         except Exception as exc:
             if type(exc).__name__ == "TesseractNotFoundError":
                 raise BackendUnavailableError(
-                    "The Tesseract binary was not found; install it and ensure it is on PATH"
+                    "Tesseract binary not found on PATH"
                 ) from exc
             raise AdapterError(f"Tesseract inference failed: {exc}") from exc
         return OcrResult(

@@ -1,5 +1,7 @@
-"""Content-moderation backend using a transformers image classifier
-(extra: ``horasis[moderation]``)."""
+"""Content-moderation backend using a transformers image classifier.
+
+Needs the ``horasis[moderation]`` extra.
+"""
 
 from __future__ import annotations
 
@@ -23,11 +25,11 @@ class TransformersModerationAdapter(Backend):
     Wraps a Hugging Face ``image-classification`` pipeline; every label the
     model emits becomes a category with its score.
 
-    ``flagged`` is decided by thresholds. The :class:`~horasis.orchestration.pipeline.Pipeline`
-    re-applies the thresholds from :class:`~horasis.foundation.config.Config`
-    to every moderation result, so Config is the single source of truth when
-    used through ``Client``. When used standalone, pass `threshold_for`
-    (e.g. ``config.moderation_threshold_for``); the default is 0.5.
+    ``flagged`` comes from thresholds. Through ``Client``, the
+    :class:`~horasis.orchestration.pipeline.Pipeline` re-applies the
+    thresholds from :class:`~horasis.foundation.config.Config` to every
+    result. Standalone, pass `threshold_for` (e.g.
+    ``config.moderation_threshold_for``); the default is 0.5.
 
     Args:
         model: Hugging Face model id or local path. Weights are downloaded
@@ -67,8 +69,8 @@ class TransformersModerationAdapter(Backend):
             from transformers import pipeline
         except ImportError as exc:
             raise BackendUnavailableError(
-                "The 'transformers' package is required for the moderation backend. "
-                "Install it with: pip install 'horasis[moderation]'"
+                "the moderation backend needs the transformers package: "
+                "pip install 'horasis[moderation]'"
             ) from exc
         device = self._device
         if device is None and self.effective_device() != "auto":
@@ -106,7 +108,7 @@ class TransformersModerationAdapter(Backend):
         except HorasisError:
             raise
         except Exception as exc:
-            raise AdapterError(f"Moderation inference failed: {exc}") from exc
+            raise AdapterError(f"moderation inference failed: {exc}") from exc
         return ModerationResult(
             backend=self.name, latency_ms=(time.perf_counter() - start) * 1000, labels=labels
         )

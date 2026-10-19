@@ -33,7 +33,7 @@ from horasis.viz import _open_video_writer
 
 
 class UltralyticsAdapter(Backend):
-    """`Backend` backend powered by Ultralytics YOLO models.
+    """`Backend` that runs Ultralytics YOLO models.
 
     Args:
         detect_model: Path or model identifier for the detection model
@@ -73,8 +73,7 @@ class UltralyticsAdapter(Backend):
             from ultralytics import YOLO
         except ImportError as exc:
             raise BackendUnavailableError(
-                "The 'ultralytics' package is required for UltralyticsAdapter. "
-                "Install it with: pip install 'horasis[ultralytics]'"
+                "UltralyticsAdapter needs the ultralytics package: pip install 'horasis[ultralytics]'"
             ) from exc
         return YOLO
 
@@ -96,7 +95,7 @@ class UltralyticsAdapter(Backend):
         self._pose_model = None
 
     def _with_device(self, options: dict[str, Any]) -> dict[str, Any]:
-        """Add Ultralytics' ``device`` option from the effective device (auto = leave to it)."""
+        """Set Ultralytics' ``device`` option from the effective device, unless it is auto."""
         device = {"cpu": "cpu", "cuda": "cuda:0", "mps": "mps"}.get(self.effective_device())
         return options if device is None or "device" in options else {**options, "device": device}
 
@@ -188,9 +187,10 @@ class UltralyticsAdapter(Backend):
         estimate_demographics: bool = False,
         **options: Any,
     ) -> tuple[VideoDetectionResult, Any]:
-        """Single decode pass: run inference and draw+write, reusing the
-        same frame Ultralytics already decoded internally (`raw.orig_img`)
-        instead of re-opening and re-reading the video a second time.
+        """Run inference and write the annotated video in one decode pass.
+
+        Draws on the frame Ultralytics already decoded (`raw.orig_img`)
+        instead of reading the video a second time.
         """
         import os
         from pathlib import Path as _Path
@@ -281,17 +281,15 @@ class UltralyticsAdapter(Backend):
         return result, out_path
 
     def _source_for(self, image: Image) -> Any:
-        """Upright, validated RGB pixels (shared loader), as a PIL image."""
+        """Return the validated, upright RGB pixels as a PIL image."""
         return load_rgb(image)
 
     def _video_source_for(self, video: Video) -> tuple[Any, str | None]:
-        """Return (source_for_ultralytics, temp_file_path_to_clean_up_or_None).
+        """Return ``(source, temp_path_or_None)`` for Ultralytics.
 
-        Unlike images, videos are decoded frame-by-frame by Ultralytics
-        itself, which needs an actual file path or URL -- not an in-memory
-        buffer. A local path or URL is passed straight through (Ultralytics
-        streams URLs natively); only explicit raw bytes need writing out to
-        a temporary file first, which the caller is responsible for deleting.
+        Ultralytics decodes video itself and needs a file path or URL, not an
+        in-memory buffer. Paths and URLs pass through; raw bytes are written
+        to a temporary file, which the caller deletes.
         """
         if video.url is not None:
             return video.url, None
@@ -303,7 +301,7 @@ class UltralyticsAdapter(Backend):
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp:
                 temp.write(video.data)
                 return temp.name, temp.name
-        raise AdapterError("Video has neither `path`, `url`, nor `data` set")
+        raise AdapterError("video has neither `path`, `url` nor `data` set")
 
     def _infer_detect(
         self, image: Image, *, estimate_demographics: bool = False, **options: Any
@@ -338,17 +336,16 @@ class UltralyticsAdapter(Backend):
             from deepface import DeepFace
         except ImportError as exc:
             raise BackendUnavailableError(
-                "The 'deepface' package is required for demographic estimation. "
-                "Install it with: pip install 'horasis[demographics]'"
+                "demographic estimation needs the deepface package: "
+                "pip install 'horasis[demographics]'"
             ) from exc
         return DeepFace
 
     def _estimate_face_in_box(self, orig_bgr: Any, xyxy: list[float]) -> FaceEstimate | None:
         """Crop the person's box out of the frame and estimate age/gender.
 
-        Returns `None` (rather than raising) if no usable face is found in
-        the crop -- a missing estimate on one detection shouldn't fail the
-        whole call.
+        Returns None instead of raising when the crop has no usable face, so
+        one missing estimate does not fail the whole call.
         """
         height, width = orig_bgr.shape[:2]
         x1, y1 = max(int(xyxy[0]), 0), max(int(xyxy[1]), 0)

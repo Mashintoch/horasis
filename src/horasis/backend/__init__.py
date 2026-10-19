@@ -1,8 +1,6 @@
-"""Backend abstraction.
+"""Layer 2: the `Backend` interface, its adapters and `BackendRegistry`.
 
-Defines the `Backend` interface, concrete adapters, and the `BackendRegistry`
-registry used to resolve which adapter handles a given task. Depends only
-on the foundation layer.
+Imports only from the foundation layer.
 """
 
 from horasis.backend.base import Backend

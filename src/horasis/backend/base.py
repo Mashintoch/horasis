@@ -7,7 +7,7 @@ from horasis.foundation.schemas import Image, Result, Task, Video
 
 
 class Backend(ABC):
-    """Abstract backend. Depends only on the foundation layer."""
+    """Interface every inference backend implements."""
 
     name: str
 
@@ -25,22 +25,21 @@ class Backend(ABC):
 
     @abstractmethod
     def infer(self, task: Task, image: Image, **options: object) -> Result:
-        """Run inference and return a :class:`Result` subclass instance.
+        """Run `task` on `image` and return the matching :class:`Result` subclass.
 
         Raises:
-            AdapterError: if inference fails for any reason.
+            AdapterError: if inference fails.
             BackendUnavailableError: if `task` is not supported by this backend.
         """
         raise NotImplementedError
 
     def infer_video(self, task: Task, video: Video, **options: object) -> Result:
-        """Run inference over a video and return a :class:`Result` subclass instance.
+        """Run `task` over a video and return the matching :class:`Result` subclass.
 
-        Optional extension point -- most backends only implement `infer`
-        for still images. The default implementation always raises.
+        Optional; most backends only implement `infer`. The default raises.
 
         Raises:
-            AdapterError: if inference fails for any reason.
+            AdapterError: if inference fails.
             BackendUnavailableError: if this backend does not support video,
                 or does not support `task` for video.
         """
@@ -49,20 +48,17 @@ class Backend(ABC):
     def infer_video_and_annotate(
         self, task: Task, video: Video, *, output_path: object, **options: object
     ) -> tuple[Result, object]:
-        """Run video inference and write an annotated video in a single pass.
+        """Run video inference and write an annotated video in one decode pass.
 
-        Optional, performance-oriented extension point: a backend that
-        implements this can decode the video once and reuse the same
-        decoded frames for both inference and drawing, instead of the
-        caller doing `infer_video()` then `Result.annotate()` separately
-        (which decodes the video twice). Requires the optional `viz` extra.
-        The default implementation always raises.
+        Optional. Calling `infer_video` and then `Result.annotate` decodes the
+        video twice; a backend that implements this reuses each decoded frame
+        for both. Requires the ``viz`` extra. The default raises.
 
         Returns:
-            A `(result, output_path)` tuple.
+            A ``(result, output_path)`` tuple.
 
         Raises:
-            AdapterError: if inference fails for any reason.
+            AdapterError: if inference fails.
             BackendUnavailableError: if this backend does not support this
                 combined operation, or does not support `task` for it.
         """
@@ -80,17 +76,17 @@ class Backend(ABC):
         return task in self.supported_video_annotate_tasks
 
     def effective_device(self) -> str:
-        """The device to use: this backend's own setting, else the Config default."""
+        """Return this backend's own device setting, else the `Config` default."""
         return self.device or self.default_device
 
     def is_loaded(self) -> bool:
-        """Whether this backend currently holds model weights in memory."""
+        """Return True if this backend holds model weights in memory."""
         return False
 
     def unload(self) -> None:
-        """Release loaded models; they reload lazily on next use. Default: no-op."""
+        """Release loaded models; they reload on next use. The default does nothing."""
         return
 
     def warm_up(self) -> None:
-        """Optional hook to preload models/weights. Default is a no-op."""
+        """Load models ahead of the first call. The default does nothing."""
         return

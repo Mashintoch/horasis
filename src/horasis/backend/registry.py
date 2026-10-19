@@ -42,7 +42,7 @@ class BackendRegistry:
         max_loaded: int | None = None,
         auto_download_models: bool = False,
     ) -> None:
-        """Apply `Config.device` / `max_loaded_models` / `auto_download_models` to all backends."""
+        """Apply `Config.device`, `max_loaded_models` and `auto_download_models` to all backends."""
         self._device = device
         self._max_loaded = max_loaded
         self._auto_download = auto_download_models
@@ -71,7 +71,7 @@ class BackendRegistry:
         try:
             return self._backends[name]
         except KeyError as exc:
-            raise BackendUnavailableError(f"No backend registered as {name!r}") from exc
+            raise BackendUnavailableError(f"no backend registered as {name!r}") from exc
 
     def names(self) -> list[str]:
         return list(self._backends)
@@ -117,7 +117,7 @@ class BackendRegistry:
         order: Sequence[str] = (),
         fallback: Sequence[str] = (),
     ) -> Backend:
-        """Pick the backend to use for `task` on video (`Video`) input.
+        """Pick the backend to use for `task` on video input.
 
         Same resolution order as `resolve`, but checks `supports_video`
         instead of `supports`.
@@ -144,7 +144,7 @@ class BackendRegistry:
         order: Sequence[str] = (),
         fallback: Sequence[str] = (),
     ) -> Backend:
-        """Pick the backend to use for combined `task` video detect+annotate.
+        """Pick the backend to use for `task` with combined video detect-and-annotate.
 
         Same resolution order as `resolve`, but checks
         `supports_video_annotate` instead of `supports`.
@@ -177,11 +177,10 @@ class BackendRegistry:
             backend = self.get(preferred)
             if not check(backend):
                 raise BackendUnavailableError(
-                    f"Backend {preferred!r} does not support {kind}task {task.value!r}"
+                    f"backend {preferred!r} does not support {kind}task {task.value!r}"
                 )
             return backend
 
-        # Config preference, then the default, then the fallback list, then anything.
         candidates = [*order, default, *fallback, *self._backends]
         considered: list[str] = []
         for name in dict.fromkeys(candidates):
@@ -194,9 +193,8 @@ class BackendRegistry:
 
         registered = self.names()
         raise NoBackendError(
-            f"No registered backend supports {kind}task {task.value!r}. "
-            f"Registered backends: {registered or 'none'}. "
-            "Register one that supports it, or install the matching extra "
-            "(e.g. horasis[ocr], horasis[moderation]).",
+            f"no registered backend supports {kind}task {task.value!r}; "
+            f"registered: {registered or 'none'}; "
+            "register one or install the matching extra (e.g. horasis[ocr])",
             context={"task": task.value, "registered": registered, "considered": considered},
         )

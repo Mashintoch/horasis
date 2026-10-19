@@ -2,10 +2,10 @@
 
 Wire protocol (served by ``horasis.server``):
 
-* ``POST {endpoint}/v1/{task}`` -- multipart form with an ``image`` file and
+* ``POST {endpoint}/v1/{task}``: multipart form with an ``image`` file and
   an optional JSON ``options`` field; credential in the ``X-API-Key`` header.
-* ``200`` -> JSON body in the shape of the matching ``Result`` result.
-* Errors -> ``{"error": {"type": "...", "message": "..."}}`` with a status code.
+* ``200``: JSON body in the shape of the matching ``Result``.
+* Errors: ``{"error": {"type": "...", "message": "..."}}`` with a status code.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ _RETRYABLE_STATUS = frozenset({502, 503, 504})
 
 
 def map_error_response(status: int, body: Any, headers: Any = None) -> HorasisError:
-    """Translate a failed HTTP response into the matching `HorasisError` exception."""
+    """Translate a failed HTTP response into the matching `HorasisError`."""
     error = body.get("error") if isinstance(body, dict) else None
     error = error if isinstance(error, dict) else {}
     kind = str(error.get("type", ""))
@@ -171,8 +171,7 @@ class RemoteAdapter(Backend):
             import httpx
         except ImportError as exc:
             raise BackendUnavailableError(
-                "The 'httpx' package is required for RemoteAdapter. "
-                "Install it with: pip install 'horasis[remote]'"
+                "RemoteAdapter needs the httpx package: pip install 'horasis[remote]'"
             ) from exc
         self._client = httpx.Client(
             timeout=httpx.Timeout(self._timeout, connect=min(10.0, self._timeout))
@@ -207,9 +206,9 @@ class RemoteAdapter(Backend):
                 )
             except Exception as exc:
                 if not _is_transport_error(exc):
-                    raise RemoteError(f"Remote request failed: {exc}") from exc
+                    raise RemoteError(f"remote request failed: {exc}") from exc
                 last_error = RemoteError(
-                    f"Remote request to {url} failed: {type(exc).__name__}: {exc}", retryable=True
+                    f"remote request to {url} failed: {type(exc).__name__}: {exc}", retryable=True
                 )
             else:
                 if response.status_code == 200:
@@ -232,14 +231,14 @@ class RemoteAdapter(Backend):
     def _parse(self, task: Task, response: Any, latency_ms: float) -> Result:
         payload = _safe_json(response)
         if not isinstance(payload, dict):
-            raise RemoteError("Remote server returned a non-object JSON body", status_code=200)
+            raise RemoteError("remote server returned a non-object JSON body", status_code=200)
         try:
             result = _RESULT_TYPES[task].model_validate(
                 {**payload, "task": task.value, "backend": self.name, "latency_ms": latency_ms}
             )
         except Exception as exc:
             raise RemoteError(
-                f"Remote server returned an invalid {task.value} result: {exc}", status_code=200
+                f"remote server returned an invalid {task.value} result: {exc}", status_code=200
             ) from exc
         return result
 
@@ -260,7 +259,7 @@ def _safe_json(response: Any) -> Any:
 
 
 def _json_safe(options: dict[str, Any]) -> dict[str, Any]:
-    """Keep only options that survive JSON encoding."""
+    """Return only the options that survive JSON encoding."""
     kept: dict[str, Any] = {}
     for key, value in options.items():
         try:

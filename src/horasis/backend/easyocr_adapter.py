@@ -16,18 +16,17 @@ from horasis.foundation.schemas import Image, OcrResult, Result, Task, TextRegio
 class EasyOCRAdapter(Backend):
     """`Backend` that reads text with EasyOCR.
 
-    Each text segment EasyOCR finds becomes a :class:`TextRegion` with its text,
-    confidence, tight polygon and axis-aligned box. Segments are put in
-    reading order and numbered into lines (``TextRegion.line_index``), so
-    ``OcrResult.lines`` gives you line-level text.
+    Each segment EasyOCR finds becomes a :class:`TextRegion` with its text,
+    confidence, polygon and box. Segments are put in reading order and
+    numbered into lines (``TextRegion.line_index``), so ``OcrResult.lines``
+    gives line-level text.
 
     Args:
         languages: EasyOCR language codes, e.g. ``["en", "fr"]``.
         gpu: Use the GPU. ``None`` lets EasyOCR decide.
         min_confidence: Drop segments scoring below this.
-        reader: A pre-built ``easyocr.Reader`` (or compatible object);
-            mainly for tests. If omitted, one is created on first use,
-            which may download model weights.
+        reader: A pre-built ``easyocr.Reader``-compatible object (for tests).
+            If omitted, one is created on first use, which may download weights.
         name: Registry name; defaults to ``"easyocr"``.
     """
 
@@ -56,8 +55,7 @@ class EasyOCRAdapter(Backend):
             import easyocr
         except ImportError as exc:
             raise BackendUnavailableError(
-                "The 'easyocr' package is required for EasyOCRAdapter. "
-                "Install it with: pip install 'horasis[ocr]'"
+                "EasyOCRAdapter needs the easyocr package: pip install 'horasis[ocr]'"
             ) from exc
         gpu = self._gpu
         if gpu is None and self.effective_device() != "auto":
