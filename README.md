@@ -39,7 +39,7 @@ service.
 
 ## Install
 
-Requires Python 3.10–3.12.
+Requires Python >=3.10–3.12.
 
 ```bash
 pip install horasis
@@ -372,7 +372,7 @@ pylint $(git ls-files '*.py')
 
 ## Status and known limits
 
-Version 1.0.0 (see [CHANGELOG.md](CHANGELOG.md)) supports Python 3.10–3.12.
+Version 1.0.1 (see [CHANGELOG.md](CHANGELOG.md)) supports Python >=3.10–3.12.
 The offline test suite uses fake backends and never downloads a model or touches
 the network. The real-model tests in `tests/integration/real/` (Ultralytics,
 ONNX, EasyOCR, Tesseract, YuNet, moderation, remote) run only with
