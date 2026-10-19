@@ -81,10 +81,6 @@ dev = [
 [project.scripts]
 horasis = "horasis.cli:main"
 
-# Third-party plugins register backends in their own pyproject.toml, e.g.:
-# [project.entry-points."horasis.backends"]
-# my_backend = "my_package.adapter:MyAdapter"
-
 [tool.setuptools.dynamic]
 version = { attr = "horasis.__version__" }
 

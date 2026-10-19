@@ -1,15 +1,10 @@
 # horasis
 
-A layered, plugin-friendly computer vision SDK with API-key based, tiered,
-quota-aware access control.
-
-`horasis` puts object detection, image
-classification, segmentation, pose estimation, OCR, face detection and
-content moderation behind one small, stable public API. Backend,
-orchestration and access-control concerns are kept cleanly separated, so the
-SDK can gain new backends and capabilities without breaking callers. You can
-use it as a library in a script, as a command-line tool, or as a metered,
-multi-tenant HTTP vision service.
+horasis is a Python computer vision SDK. It puts object detection,
+classification, segmentation, pose estimation, OCR, face detection and content
+moderation behind one API, with API keys, tiers, quotas and rate limits built
+in. Use it as a library, from the command line, or as a multi-tenant HTTP
+service.
 
 *horasis* is Greek for 'the act of seeing'.
 
@@ -35,28 +30,32 @@ multi-tenant HTTP vision service.
 
 ## What horasis can do
 
-**See**
+### Vision
+
 - Detect objects in an image or video, with labels, confidence and boxes
 - Classify images, returning top-k labels
-- Segment instances, with a mask per object
+- Segment instances, with an outline per object
 - Estimate human pose, with keypoints per person
 - Read text (OCR), returning words with polygons and confidence, merged into lines
 - Detect faces, with boxes, confidence and 5-point landmarks. Detection only, never identification.
 - Moderate content, returning per-category scores and a `flagged` decision from configurable thresholds
 
-**Accept any reasonable input**
-- File paths, raw bytes, PIL images, numpy arrays or pre-built `Image` objects
+### Inputs
+
+- File paths, raw bytes, PIL images, numpy arrays or `Image` objects
 - Image URLs, if you opt in
 - Video files and webcams
-- Inputs are validated for size, pixel count and format, and corrected for EXIF orientation, once at the API boundary
+- Size, pixel count and format are validated, and EXIF orientation applied, once at the API boundary
 
-**Return typed, useful results**
-- Every call returns a `Result` result, never a raw backend object
+### Results
+
+- Every call returns a `Result`, never a raw backend object
 - Filter by confidence or label, draw annotations, and serialise to dict or JSON
 - Export detections as COCO
 - Annotate video output (`viz` extra)
 
-**Control and meter access**
+### Access control
+
 - API keys stored as salted hashes, compared in constant time
 - Key expiry, revocation and scopes
 - Tiers with quotas, plus per-task cost weights
@@ -64,14 +63,16 @@ multi-tenant HTTP vision service.
 - Quotas in memory, SQLite or Redis, with atomic counters
 - Usage reports per key, and `retry_after` on every limit error
 
-**Run fast and flexibly**
+### Runtime
+
 - Sync and async clients
 - Concurrent batches with per-item errors
 - Frame-skipping video streams
-- Lazy model loading, warmup, CPU/CUDA/MPS selection and an LRU cap on loaded backends
+- Lazy model loading, warmup, CPU/CUDA/MPS selection and a cap on loaded backends
 - Config-driven backend routing with fallbacks, or a backend forced per call
 
-**Plug in anywhere**
+### Integration
+
 - A CLI for every capability
 - A FastAPI server with API-key auth
 - A remote backend, so one horasis can call another
@@ -97,8 +98,8 @@ pip install horasis[server]        # FastAPI server (`horasis serve`)
 pip install horasis[all]           # everything
 ```
 
-Tesseract also needs the `tesseract` binary installed on the system. YuNet
-needs its `.onnx` model file, which isn't downloaded for you.
+Tesseract also needs the `tesseract` binary. YuNet needs its `.onnx` model:
+run `horasis models pull yunet`.
 
 ## Quick start
 
@@ -115,8 +116,6 @@ for d in result.detections:
     print(d.label, float(d.confidence), d.box)
 ```
 
-Each capability always returns a `Result` subclass, never a raw backend object.
-
 ## Capabilities
 
 | Capability | Class | Batch method | Result | CLI | Backends |
@@ -130,11 +129,10 @@ Each capability always returns a `Result` subclass, never a raw backend object.
 | Face detection | `FaceDetector` | `detect_faces_batch` | `FaceResult` | `horasis faces` | YuNet, remote |
 | Moderation | `ContentModerator` | `moderate_batch` | `ModerationResult` | `horasis moderate` | transformers, remote |
 
-Each capability is reached through the `Client` client (for example
-`client.detection` and `client.ocr`). The `examples/` folder has a runnable,
-tested script for every capability: `detect`, `classify`, `segment`, `pose`,
-`ocr`, `faces`, `moderate`, `async_batch`, `stream_video`, `server` and
-`remote_client`.
+Each capability is an attribute of `Client`, such as `client.detection` or
+`client.ocr`. `examples/` has a tested script for each: `detect`, `classify`,
+`segment`, `pose`, `ocr`, `faces`, `moderate`, `async_batch`, `stream_video`,
+`server` and `remote_client`.
 
 ```python
 # OCR, with routing and a forced backend
@@ -145,14 +143,13 @@ client.ocr.extract_text("scan.png", api_key=key, backend="tesseract")
 ## Inputs
 
 Every capability accepts a file path (`str`/`Path`), raw `bytes`, a `PIL.Image`,
-a numpy array (RGB order; `uint8`, or floats in `0..1`), or a pre-built `Image`.
-Images are decoded **once**, at the API boundary:
+a numpy array (RGB order; `uint8`, or floats in `0..1`), or an `Image`. Images
+are decoded once, at the API boundary:
 
-- Size and format are validated against `Config.inputs` (`max_bytes`, `max_pixels`,
+- Size and format are checked against `Config.inputs` (`max_bytes`, `max_pixels`,
   `allowed_formats`). Bad input raises `ValidationError`.
 - EXIF orientation is applied, so every backend sees upright pixels.
-- **URLs are off by default.** Opt in with `Config(inputs=InputPolicy(allow_urls=True))`.
-  If you do this for untrusted callers, also block requests to internal networks.
+- URLs are off by default. Opt in with `Config(inputs=InputPolicy(allow_urls=True))`.
 
 ## Results
 
@@ -168,7 +165,7 @@ Detections also export COCO:
 result.to_coco(image_id=1, file_name="a.jpg", width=W, height=H)
 ```
 
-OCR results expose `result.lines`, which merges words into lines using each
+OCR results have `result.lines`, which merges words into lines using each
 `TextRegion`'s `line_index`.
 
 ## Access control
@@ -177,34 +174,32 @@ OCR results expose `result.lines`, which merges words into lines using each
 from horasis import HashedApiKeyValidator, Tier, Client
 from horasis.access import SQLiteQuotaStore   # or RedisQuotaStore (pip install horasis[redis])
 
-validator = HashedApiKeyValidator()           # stores only salted hashes, compares in constant time
+validator = HashedApiKeyValidator()           # stores only salted hashes
 key = validator.issue(principal_id="alice", tier=Tier.PRO,
                       expires_at=None, scopes=["detect", "ocr"])   # shown once; keep it
 client = Client.build(validator=validator, quota_store=SQLiteQuotaStore("quota.db"))
 
-client.usage(key)   # UsageReport: used/remaining overall and per task, plus seconds until reset
+client.usage(key)   # UsageReport: used/remaining overall and per task, seconds until reset
 validator.revoke(key)
 ```
 
-- **Tiers (`Tier`)** set each caller's quotas and rate limits.
-- **Cost-weighted quotas:** each call consumes `Config.task_cost[task]` units
-  (by default, 2 for OCR and moderation and 1 for everything else). Counters are
-  atomic in every store.
-- **Rate limits:** there are per-minute token buckets per tier (`TierRule.rate`)
-  and per task (`task_rates`). By default they live in-process, so each
-  worker enforces its own bucket. To share them across workers, use the Redis
-  limiter (atomic Lua script on Redis server time, keyed per principal + scope):
-  `store, limiter = redis_backends(url=...)` then
-  `Client.build(quota_store=store, rate_limiter=limiter)`, or set
+- A tier (`Tier`) sets a caller's quotas and rate limits. Scopes narrow what a
+  key may call within its tier.
+- Each call consumes `Config.task_cost[task]` quota units: 2 for OCR and
+  moderation and 1 for everything else by default. Counters are atomic in every
+  store. Add windowed quotas per task with `task_quotas`.
+- Rate limits are per-minute token buckets per tier (`TierRule.rate`) and per
+  task (`task_rates`). By default they live in-process, so each worker enforces
+  its own buckets. To share them, use the Redis limiter (a Lua script on Redis
+  server time): `store, limiter = redis_backends(url=...)`, then
+  `Client.build(quota_store=store, rate_limiter=limiter)`; or set
   `Config.rate_limit_store: redis` with `redis_url`. `horasis serve --workers N`
-  warns when the limiter is in-process; `--redis-url` shares quotas and limits.
-  You can add windowed quotas per task with `task_quotas`.
-- **Errors:** `QuotaExceededError` and `RateLimitedError` carry `limit`, `scope`
-  and `retry_after` (seconds). Denied calls are refunded.
-- **Scopes** narrow what a key may call within its tier.
-- **Persistence:** `HashedApiKeyValidator` keeps its records in memory. Persist them
-  with `export_records()`. `InMemoryApiKeyValidator` keeps plaintext keys and is
-  for tests and demos only.
+  warns when the limiter is in-process, and `--redis-url` shares both.
+- `QuotaExceededError` and `RateLimitedError` carry `limit`, `scope` and
+  `retry_after` (seconds). Denied calls are refunded.
+- `HashedApiKeyValidator` keeps its records in memory; persist them with
+  `export_records()`. `InMemoryApiKeyValidator` keeps plaintext keys and is for
+  tests and demos.
 
 ## Backends and routing
 
@@ -223,17 +218,17 @@ client = Client.build(
 )
 ```
 
-The backend for each call is resolved in this order: an explicit `backend=`,
-then `backend_order[task]`, then `default_backend`, then `fallback_order`,
-then any registered backend. If nothing supports the task, `NoBackendError`
-lists what is registered.
+Each call resolves its backend in this order: an explicit `backend=`, then
+`backend_order[task]`, `default_backend`, `fallback_order`, and finally any
+registered backend. If nothing supports the task, `NoBackendError` lists what
+is registered.
 
 | Backend | Tasks | Notes |
 |---|---|---|
 | `UltralyticsAdapter` | detect, classify, segment, pose (+ video detect) | Default; weights download on first use |
-| `OnnxAdapter` | detect *or* classify | Letterbox + NMS, CPU/CUDA, labels from a `<model>.labels.txt` / `.json` sidecar |
+| `OnnxAdapter` | detect or classify | Letterbox + NMS, CPU/CUDA, labels from a `<model>.labels.txt` / `.json` sidecar |
 | `EasyOCRAdapter` / `TesseractAdapter` | ocr | `TextRegion`s with polygon and `line_index` |
-| `YuNetFaceAdapter` | face | Boxes, confidence, 5-point landmarks; **detection only, no recognition**; model from `horasis models pull yunet` (or `model_path=`) |
+| `YuNetFaceAdapter` | face | Boxes, confidence, 5-point landmarks; detection only, no recognition; model from `horasis models pull yunet` or `model_path=` |
 | `TransformersModerationAdapter` | moderate | Per-category scores; `flagged` uses `Config.moderation_threshold(s)` |
 | `RemoteAdapter` | all | httpx; timeouts, retries with backoff, errors mapped to `HorasisError` types |
 
@@ -249,21 +244,19 @@ async with AsyncClient.build(validator=validator) as client:      # blocking bac
         print(frame.frame_index, len(frame.result.detections))
 ```
 
-- **Batches** (`detect_batch`, `classify_batch`, `extract_text_batch`,
-  `detect_faces_batch`, `moderate_batch`) return one `BatchItem` per input.
-  Each item has either a `.result` or an `.error` (a `HorasisError`), never both.
-  Quota and rate limits are charged **per item**, but only after the item passes
-  input validation (size, pixels, format, URL policy); items that fail validation
-  get a `BatchItem.error` and cost nothing. An invalid API key aborts the whole batch.
-- **Streams** (`client.detection.stream(source, every_n_frames=N, max_frames=...)`)
-  yield a `FrameResult` per processed frame from a video file or camera index
-  (needs `horasis[video]`). Each processed frame is charged as one detection call.
-- **Lifecycle:**
-  - Models load lazily, and `client.warmup()` loads them up front.
-  - `Config(device="auto"|"cpu"|"cuda"|"mps")` picks the device for backends that
-    can choose. An adapter's own `device=` takes precedence.
-  - `Config(max_loaded_models=N)` unloads the least recently used backend beyond
-    N. It reloads on next use. Granularity is per backend.
+- Batch methods (`detect_batch`, `classify_batch`, `extract_text_batch`,
+  `detect_faces_batch`, `moderate_batch`) return one `BatchItem` per input, with
+  either a `.result` or an `.error` (a `HorasisError`). Quota and rate limits are
+  charged per item, after the item passes input validation; items that fail
+  validation cost nothing. An invalid API key aborts the whole batch.
+- `client.detection.stream(source, every_n_frames=N, max_frames=...)` yields a
+  `FrameResult` per processed frame from a video file or camera index (needs
+  `horasis[video]`). Each processed frame is charged as one detection call.
+- Models load lazily; `client.warmup()` loads them up front.
+  `Config(device="auto"|"cpu"|"cuda"|"mps")` picks the device for backends that
+  can choose, and an adapter's own `device=` takes precedence.
+  `Config(max_loaded_models=N)` unloads the least recently used backend beyond
+  N; it reloads on next use.
 
 ## Hooks and telemetry
 
@@ -275,12 +268,12 @@ timing = TimingHook().attach(client.hooks)      # timing.summary() -> per-task c
 client.hooks.on(HookEvent.ON_ERROR, lambda **p: print("failed:", p["error"]))
 ```
 
-Hook events and their keyword payloads are documented in
-`horasis.orchestration.hooks`. Hooks only observe. An exception in a
-before/after hook propagates; one in an `ON_ERROR` hook is logged and swallowed.
+Hook events and their payloads are documented in `horasis.orchestration.hooks`.
+Hooks only observe. An exception in a before or after hook propagates; one in an
+`ON_ERROR` hook is logged and swallowed.
 
-`OTelTelemetry` (extra `horasis[otel]`) emits a span per call, plus the
-metrics `horasis.calls`, `horasis.errors` and `horasis.latency_ms`. Pass it as
+`OTelTelemetry` (extra `horasis[otel]`) emits a span per call and the metrics
+`horasis.calls`, `horasis.errors` and `horasis.latency_ms`. Pass it as
 `Client.build(telemetry=...)`. It does nothing if OpenTelemetry isn't installed.
 
 ## Command line and HTTP server
@@ -291,30 +284,24 @@ horasis ocr scan.png --backend tesseract
 horasis models pull yunet            # one-time, checksum-verified download into the cache
 horasis faces group.jpg --draw faces.png
 horasis classify|moderate|segment|pose IMAGE   # same flags: --backend --json --min-conf --draw --device
-horasis backends                                # built-in and plugin backends (and plugins that failed to load)
+horasis backends                                # built-in and plugin backends, and plugins that failed to load
 
 HORASIS_API_KEY=change-me horasis serve --port 8000     # needs horasis[server]
 curl -H "X-API-Key: change-me" -F image=@photo.jpg -F options='{"conf": 0.4}' localhost:8000/v1/detect
 ```
 
-**Endpoints:**
-- `POST /v1/{task}`, where task is one of `detect`, `classify`, `ocr`, `face`, `moderate`, `segment` or `pose`
-- `GET /health`
-- `GET /usage`
-
-**Authentication:** an `X-API-Key` header.
-
-**Errors** come back as `{"error": {"type", "message", ...}}` with status
-401, 403, 404, 413, 422, 429, 501 or 500. A 429 carries `Retry-After`.
-
-**Options** are whitelisted per task.
+The server has three endpoints: `POST /v1/{task}` (task is one of `detect`,
+`classify`, `ocr`, `face`, `moderate`, `segment` or `pose`), `GET /health` and
+`GET /usage`. Send the key in an `X-API-Key` header. Options are allow-listed
+per task. Errors come back as `{"error": {"type", "message", ...}}` with status
+401, 403, 404, 413, 422, 429, 501 or 500; a 429 carries `Retry-After`.
 
 `RemoteAdapter` is the matching client, so one horasis instance can use another
 as a backend.
 
 ## Configuration
 
-Everything configurable lives in a `Config`:
+`Config` holds everything configurable:
 
 - tiers, quotas, rate limits and task costs
 - input policy
@@ -322,7 +309,7 @@ Everything configurable lives in a `Config`:
 - device and the model cap
 - moderation thresholds
 
-It can be loaded from YAML:
+Load it from YAML:
 
 ```python
 from horasis import Config, Client
@@ -331,12 +318,12 @@ config = Config.from_yaml("config.yaml")
 client = Client.build(config=config)
 ```
 
-See `src/horasis/config/default.yaml` for the shipped defaults.
+`src/horasis/config/default.yaml` has the shipped defaults.
 
 ## Errors
 
-All errors are `HorasisError` subclasses in `horasis.foundation.errors`, so you can
-catch the base class or handle specific cases:
+All errors are `HorasisError` subclasses in `horasis.foundation.errors`. Catch
+the base class or a specific one:
 
 | Error | When |
 |---|---|
@@ -353,7 +340,7 @@ catch the base class or handle specific cases:
 
 ## Writing a backend plugin
 
-See [docs/plugins.md](docs/plugins.md) for the full guide.
+See [docs/plugins.md](docs/plugins.md).
 
 ```toml
 # your package's pyproject.toml
@@ -382,19 +369,19 @@ PluginLoader().discover(client.registry)
 
 ## Architecture
 
-There are five layers, and each depends only on the layers below it. A test
+There are five layers, and each imports only from the layers below it. A test
 enforces this.
 
-| Layer | Name | Responsibility |
+| Layer | Name | Contents |
 |---|---|---|
-| 5 | Public API | `Client` / `AsyncClient` + capability classes (`ObjectDetector`, `ImageClassifier`, `TextExtractor`, `FaceDetector`, `ContentModerator`, `ObjectSegmenter`, `PoseEstimator`), CLI, server |
-| 4 | Access control | `Tier`, `Principal`, `Policy`, `QuotaManager`, rate limits, `@requires_access` decorator |
+| 5 | Public API | `Client` / `AsyncClient` and the capability classes (`ObjectDetector`, `ImageClassifier`, `TextExtractor`, `FaceDetector`, `ContentModerator`, `ObjectSegmenter`, `PoseEstimator`), CLI, server |
+| 4 | Access control | `Tier`, `Principal`, `Policy`, `QuotaManager`, rate limits, `@requires_access` |
 | 3 | Orchestration | `Pipeline`, `Hooks` (+ `LoggingHook`, `TimingHook`) |
 | 2 | Backend abstraction | `Backend` interface, `BackendRegistry` (routing), adapters |
 | 1 | Foundation | `Config`, `HorasisError` hierarchy, result schemas (`Result`, `Confidence`, `Task`, `TextRegion`, `Image`), imaging, `Telemetry` |
 
-Plugins (`PluginLoader`) register additional `Backend` implementations via the
-`horasis.backends` entry-point group, independently of the core layers.
+`PluginLoader` registers third-party `Backend` implementations from the
+`horasis.backends` entry-point group.
 
 ## Development
 
@@ -409,23 +396,22 @@ pylint $(git ls-files '*.py')
 ## Status and known limits
 
 Version 2.0.0 (see [CHANGELOG.md](CHANGELOG.md)) supports Python 3.10–3.12.
-Everything above is implemented and covered by offline tests that use fake
-backends. The default suite never downloads a model or touches the network. The
-`integration` pytest marker covers the real-model tests in `tests/integration/real/`
-(Ultralytics, ONNX, EasyOCR, Tesseract, YuNet, moderation, remote). They are
-skipped unless you pass `-m integration`, and each one skips itself when its
-extra, binary or model is missing. A manual and weekly workflow
-(`.github/workflows/integration.yml`) runs them with everything installed.
+The offline test suite uses fake backends and never downloads a model or touches
+the network. The real-model tests in `tests/integration/real/` (Ultralytics,
+ONNX, EasyOCR, Tesseract, YuNet, moderation, remote) run only with
+`-m integration`, and each skips itself when its extra, binary or model is
+missing. A weekly and manual workflow (`.github/workflows/integration.yml`) runs
+them with everything installed.
 
 Known limits:
 
-- Rate limits (token buckets) are per process unless you use `RedisRateLimiter`. Quotas are shared via the SQLite and Redis stores.
+- Rate limits are per process unless you use `RedisRateLimiter`. Quotas are shared through the SQLite and Redis stores.
 - `max_loaded_models` evicts whole backends, not individual models.
-- The real-model tests run Ultralytics (detect, classify, segment, pose), YuNet and the remote path in CI. ONNX, EasyOCR, Tesseract and the moderation model have integration tests that have not yet been run against real weights; smoke-test those you depend on.
-- Only the YuNet model is managed by `horasis models` (cache dir `HORASIS_CACHE_DIR`, default the platform user cache). Ultralytics, EasyOCR and transformers fetch their own weights; ONNX models are yours to supply. YuNet downloads automatically only with `Config(auto_download_models=True)`.
+- CI runs the real-model tests for Ultralytics (detect, classify, segment, pose), YuNet and the remote path. The ONNX, EasyOCR, Tesseract and moderation tests have not yet run against real weights; smoke-test the ones you depend on.
+- `horasis models` manages only the YuNet model (cache dir `HORASIS_CACHE_DIR`, default the platform user cache). Ultralytics, EasyOCR and transformers fetch their own weights; you supply ONNX models. YuNet downloads automatically only with `Config(auto_download_models=True)`.
 - `HashedApiKeyValidator` keeps its records in memory. Persist them with `export_records()`.
-- Image URL fetching is off by default. When enabled it is SSRF-hardened: http(s) only, every resolved address must be globally routable, the connection is pinned to the validated IP (no DNS rebinding), redirects are followed manually (max 3, re-validated), bodies are streamed with a size cap and must be `image/*`. `InputPolicy.url_allow_hosts` / `url_deny_hosts` add a hostname policy. Video URLs (`Video.from_url`, `stream`) use a simpler fetch without these checks, so keep them for trusted callers.
-- There's no admin API for keys, no object tracking, no result caching and no Docker image yet.
+- Image URL fetching is off by default. When enabled: http(s) only, every resolved address must be globally routable, the connection is pinned to the validated IP, redirects are followed manually (at most 3, each re-validated), and bodies are size-capped and must be `image/*`. `InputPolicy.url_allow_hosts` and `url_deny_hosts` add a hostname policy. Video URLs (`Video.from_url`, `stream`) skip these checks, so accept them only from trusted callers.
+- There is no admin API for keys, no object tracking, no result caching and no Docker image.
 
 ## License
 
