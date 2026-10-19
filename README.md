@@ -98,6 +98,11 @@ pip install horasis[server]        # FastAPI server (`horasis serve`)
 pip install horasis[all]           # everything
 ```
 
+horasis is Apache-2.0. The `ultralytics` extra installs Ultralytics, which is
+AGPL-3.0. If you run it behind a network service, the AGPL applies to that
+service unless you have an Ultralytics enterprise licence. The other backends
+don't have this restriction.
+
 Tesseract also needs the `tesseract` binary. YuNet needs its `.onnx` model:
 run `horasis models pull yunet`.
 
@@ -395,7 +400,7 @@ pylint $(git ls-files '*.py')
 
 ## Status and known limits
 
-Version 2.0.0 (see [CHANGELOG.md](CHANGELOG.md)) supports Python 3.10–3.12.
+Version 1.0.0 (see [CHANGELOG.md](CHANGELOG.md)) supports Python 3.10–3.12.
 The offline test suite uses fake backends and never downloads a model or touches
 the network. The real-model tests in `tests/integration/real/` (Ultralytics,
 ONNX, EasyOCR, Tesseract, YuNet, moderation, remote) run only with
