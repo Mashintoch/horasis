@@ -3,50 +3,37 @@
 The only supported import surface for external callers is this top-level
 module and :mod:`horasis.api`. Everything under `foundation`, `access`,
 `backend`, `orchestration`, and `plugins` is public for extension authors
-(writing a new `Mechane` backend, a custom `Aisthesis` sink, etc.) but is
+(writing a new `Backend` backend, a custom `Telemetry` sink, etc.) but is
 not part of the stability guarantee of the top-level API.
 
 Quick start:
-    >>> from horasis import Skopos, InMemoryApiKeyValidator, Klimax
+    >>> from horasis import Client, InMemoryApiKeyValidator, Tier
     >>> validator = InMemoryApiKeyValidator()
-    >>> validator.register_simple("demo-key", principal_id="alice", tier=Klimax.FREE)
-    >>> client = Skopos.build(validator=validator)
+    >>> validator.register_simple("demo-key", principal_id="alice", tier=Tier.FREE)
+    >>> client = Client.build(validator=validator)
     >>> result = client.detection.detect("photo.jpg", api_key="demo-key")
 """
 
 from horasis.access.keys import ApiKeyValidator, HashedApiKeyValidator, InMemoryApiKeyValidator
-from horasis.access.klimax import Klimax
-from horasis.access.metron import UsageReport
-from horasis.api.async_skopos import AsyncSkopos
-from horasis.api.skopos import (
+from horasis.access.quota import UsageReport
+from horasis.access.tiers import Tier
+from horasis.api.async_client import AsyncClient
+from horasis.api.client import (
+    Client,
     ContentModerator,
     FaceDetector,
     ImageClassifier,
     ObjectDetector,
-    Skopos,
     TextExtractor,
 )
-from horasis.foundation.kanon import InputPolicy, Kanon
-from horasis.foundation.schemas import (
-    BatchItem,
-    ClassificationResult,
-    DetectionResult,
-    Face,
-    FaceResult,
-    Glyph,
-    Kinesis,
-    ModerationResult,
-    OcrResult,
-    Physis,
-    Praxis,
-    VideoDetectionResult,
-)
-from horasis.foundation.sphalma import (
+from horasis.foundation.config import Config, InputPolicy
+from horasis.foundation.errors import (
     AccessDeniedError,
     AdapterError,
     BackendUnavailableError,
     ConfigurationError,
     ExpiredApiKeyError,
+    HorasisError,
     InvalidApiKeyError,
     ModelDownloadError,
     NoBackendError,
@@ -54,9 +41,22 @@ from horasis.foundation.sphalma import (
     RateLimitedError,
     RemoteError,
     RevokedApiKeyError,
-    Sphalma,
     ValidationError,
     VisualizationUnavailableError,
+)
+from horasis.foundation.schemas import (
+    BatchItem,
+    ClassificationResult,
+    DetectionResult,
+    Face,
+    FaceResult,
+    Image,
+    ModerationResult,
+    OcrResult,
+    Task,
+    TextRegion,
+    Video,
+    VideoDetectionResult,
 )
 
 __version__ = "2.0.0"
@@ -65,10 +65,12 @@ __all__ = [
     "AccessDeniedError",
     "AdapterError",
     "ApiKeyValidator",
-    "AsyncSkopos",
+    "AsyncClient",
     "BackendUnavailableError",
     "BatchItem",
     "ClassificationResult",
+    "Client",
+    "Config",
     "ConfigurationError",
     "ContentModerator",
     "DetectionResult",
@@ -76,31 +78,29 @@ __all__ = [
     "Face",
     "FaceDetector",
     "FaceResult",
-    "Glyph",
     "HashedApiKeyValidator",
+    "HorasisError",
+    "Image",
     "ImageClassifier",
     "InMemoryApiKeyValidator",
     "InputPolicy",
     "InvalidApiKeyError",
-    "Kanon",
-    "Kinesis",
-    "Klimax",
     "ModelDownloadError",
     "ModerationResult",
     "NoBackendError",
     "ObjectDetector",
     "OcrResult",
-    "Physis",
-    "Praxis",
     "QuotaExceededError",
     "RateLimitedError",
     "RemoteError",
     "RevokedApiKeyError",
-    "Skopos",
-    "Sphalma",
+    "Task",
     "TextExtractor",
+    "TextRegion",
+    "Tier",
     "UsageReport",
     "ValidationError",
+    "Video",
     "VideoDetectionResult",
     "VisualizationUnavailableError",
     "__version__",

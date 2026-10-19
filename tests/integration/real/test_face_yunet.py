@@ -4,8 +4,8 @@ import pytest
 
 from horasis import models
 from horasis.backend.face_adapter import YuNetFaceAdapter
+from horasis.foundation.errors import ModelDownloadError
 from horasis.foundation.schemas import FaceResult
-from horasis.foundation.sphalma import ModelDownloadError
 
 from .common import (
     KEY,

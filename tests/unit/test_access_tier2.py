@@ -7,15 +7,15 @@ from typing import Any
 
 import pytest
 
-from horasis import Skopos
+from horasis import Client
 from horasis.access.keys import HashedApiKeyValidator, InMemoryApiKeyValidator
-from horasis.access.klimax import Klimax
-from horasis.access.metron import Metron
+from horasis.access.quota import QuotaManager
 from horasis.access.ratelimit import TokenBucketLimiter
 from horasis.access.stores import RedisQuotaStore, SQLiteQuotaStore
-from horasis.backend.taxis import Taxis
-from horasis.foundation.kanon import Kanon, QuotaRule, RateRule, TierRule
-from horasis.foundation.sphalma import (
+from horasis.access.tiers import Tier
+from horasis.backend.registry import BackendRegistry
+from horasis.foundation.config import Config, QuotaRule, RateRule, TierRule
+from horasis.foundation.errors import (
     AccessDeniedError,
     BackendUnavailableError,
     ExpiredApiKeyError,
@@ -24,7 +24,7 @@ from horasis.foundation.sphalma import (
     RateLimitedError,
     RevokedApiKeyError,
 )
-from tests.conftest import FakeMechane, png_bytes
+from tests.conftest import FakeBackend, png_bytes
 
 
 class FakeRedis:
@@ -63,56 +63,56 @@ class FakeRedis:
 
 
 @pytest.fixture(params=["memory", "sqlite", "redis"])
-def metron(request: pytest.FixtureRequest, tmp_path: Path) -> Metron:
+def quota_manager(request: pytest.FixtureRequest, tmp_path: Path) -> QuotaManager:
     if request.param == "memory":
-        return Metron()
+        return QuotaManager()
     if request.param == "sqlite":
-        return Metron(SQLiteQuotaStore(tmp_path / "q.db"))
-    return Metron(RedisQuotaStore(FakeRedis()))
+        return QuotaManager(SQLiteQuotaStore(tmp_path / "q.db"))
+    return QuotaManager(RedisQuotaStore(FakeRedis()))
 
 
-# ---- stores / Metron ---------------------------------------------------
+# ---- stores / QuotaManager ---------------------------------------------------
 
 
-def test_weighted_consume_and_denial_refund(metron: Metron) -> None:
+def test_weighted_consume_and_denial_refund(quota_manager: QuotaManager) -> None:
     rule = QuotaRule(limit=5, window_seconds=3600)
-    assert metron.check_and_consume("a", rule, cost=2) == 2
-    assert metron.check_and_consume("a", rule, cost=3) == 5
+    assert quota_manager.check_and_consume("a", rule, cost=2) == 2
+    assert quota_manager.check_and_consume("a", rule, cost=3) == 5
     with pytest.raises(QuotaExceededError) as info:
-        metron.check_and_consume("a", rule, cost=1)
+        quota_manager.check_and_consume("a", rule, cost=1)
     err = info.value
     assert (err.limit, err.used, err.scope) == (5, 6, "quota")
     assert err.retry_after is not None and 0 < err.retry_after <= 3600
-    assert metron.used("a", rule) == 5  # the denied call was refunded
-    assert metron.remaining("a", rule) == 0
-    metron.refund("a", rule, cost=2)
-    assert metron.remaining("a", rule) == 2
+    assert quota_manager.used("a", rule) == 5  # the denied call was refunded
+    assert quota_manager.remaining("a", rule) == 0
+    quota_manager.refund("a", rule, cost=2)
+    assert quota_manager.remaining("a", rule) == 2
 
 
-def test_scopes_are_independent_and_refunds_never_go_negative(metron: Metron) -> None:
+def test_scopes_are_independent_and_refunds_never_go_negative(quota_manager: QuotaManager) -> None:
     rule = QuotaRule(limit=5, window_seconds=3600)
-    metron.check_and_consume("a", rule, scope="praxis:ocr")
-    assert metron.used("a", rule) == 0
-    metron.refund("a", rule, cost=10)
-    assert metron.used("a", rule) == 0
+    quota_manager.check_and_consume("a", rule, scope="task:ocr")
+    assert quota_manager.used("a", rule) == 0
+    quota_manager.refund("a", rule, cost=10)
+    assert quota_manager.used("a", rule) == 0
 
 
-def test_window_usage_report(metron: Metron) -> None:
+def test_window_usage_report(quota_manager: QuotaManager) -> None:
     rule = QuotaRule(limit=10, window_seconds=60)
-    metron.check_and_consume("a", rule, cost=4)
-    usage = metron.window_usage("a", rule)
+    quota_manager.check_and_consume("a", rule, cost=4)
+    usage = quota_manager.window_usage("a", rule)
     assert (usage.limit, usage.used, usage.remaining) == (10, 4, 6)
     assert 0 < usage.resets_in_seconds <= 60
 
 
 def test_sqlite_is_atomic_across_connections(tmp_path: Path) -> None:
     path = tmp_path / "shared.db"
-    metrons = [Metron(SQLiteQuotaStore(path)) for _ in range(4)]  # like 4 worker processes
+    quota_managers = [QuotaManager(SQLiteQuotaStore(path)) for _ in range(4)]  # like 4 worker processes
     rule = QuotaRule(limit=40, window_seconds=3600)
 
     def hit(i: int) -> bool:
         try:
-            metrons[i % 4].check_and_consume("p", rule)
+            quota_managers[i % 4].check_and_consume("p", rule)
             return True
         except QuotaExceededError:
             return False
@@ -175,13 +175,13 @@ def test_token_bucket_burst_refill_and_retry_after() -> None:
     limiter.acquire("other", "detect", tier)  # independent principal
 
 
-def test_token_bucket_weighted_cost_per_praxis_and_never_case() -> None:
+def test_token_bucket_weighted_cost_per_task_and_never_case() -> None:
     limiter = TokenBucketLimiter(Clock())
     tier = TierRule(
         name="t",
         quota=QuotaRule(limit=9, window_seconds=60),
         rate=RateRule(per_minute=60, burst=4),
-        praxis_rates={"ocr": RateRule(per_minute=6, burst=2)},
+        task_rates={"ocr": RateRule(per_minute=6, burst=2)},
     )
     limiter.acquire("u", "ocr", tier, cost=2)  # drains ocr bucket; 2 of 4 overall
     with pytest.raises(RateLimitedError) as info:
@@ -198,17 +198,17 @@ def test_token_bucket_weighted_cost_per_praxis_and_never_case() -> None:
 
 def test_hashed_keys_store_no_plaintext_and_validate() -> None:
     v = HashedApiKeyValidator()
-    key = v.issue(principal_id="alice", tier=Klimax.PRO, scopes=["detect"])
+    key = v.issue(principal_id="alice", tier=Tier.PRO, scopes=["detect"])
     secret = key.split(".", 1)[1]
     assert secret not in repr(v.export_records())
     principal = v.validate(key)
     assert principal.principal_id == "alice" and principal.scopes == ["detect"]
-    assert v.issue(principal_id="a", tier=Klimax.FREE) != v.issue(principal_id="a", tier=Klimax.FREE)
+    assert v.issue(principal_id="a", tier=Tier.FREE) != v.issue(principal_id="a", tier=Tier.FREE)
 
 
 def test_hashed_keys_reject_tampering_unknown_and_malformed() -> None:
     v = HashedApiKeyValidator()
-    key = v.issue(principal_id="alice", tier=Klimax.PRO)
+    key = v.issue(principal_id="alice", tier=Tier.PRO)
     tampered = key[:-1] + ("A" if key[-1] != "A" else "B")
     for bad in (tampered, "hrs_deadbeef.zzz", "nope", "", "hrs_."):
         with pytest.raises(InvalidApiKeyError):
@@ -217,15 +217,15 @@ def test_hashed_keys_reject_tampering_unknown_and_malformed() -> None:
 
 def test_hashed_keys_expiry_and_revocation() -> None:
     v = HashedApiKeyValidator()
-    expired = v.issue(principal_id="a", tier=Klimax.PRO, expires_at=time.time() - 1)
+    expired = v.issue(principal_id="a", tier=Tier.PRO, expires_at=time.time() - 1)
     with pytest.raises(ExpiredApiKeyError):
         v.validate(expired)
-    key = v.issue(principal_id="b", tier=Klimax.PRO)
+    key = v.issue(principal_id="b", tier=Tier.PRO)
     v.validate(key)
     v.revoke(key)
     with pytest.raises(RevokedApiKeyError):
         v.validate(key)
-    by_id = v.issue(principal_id="c", tier=Klimax.PRO)
+    by_id = v.issue(principal_id="c", tier=Tier.PRO)
     v.revoke(by_id.removeprefix("hrs_").split(".")[0])
     with pytest.raises(RevokedApiKeyError):
         v.validate(by_id)
@@ -233,17 +233,17 @@ def test_hashed_keys_expiry_and_revocation() -> None:
 
 def test_hashed_keys_survive_export_and_load() -> None:
     v = HashedApiKeyValidator()
-    key = v.issue(principal_id="alice", tier=Klimax.PRO, scopes=["ocr"])
+    key = v.issue(principal_id="alice", tier=Tier.PRO, scopes=["ocr"])
     restored = HashedApiKeyValidator()
     restored.load_records(v.export_records())
     assert restored.validate(key).scopes == ["ocr"]
 
 
-# ---- end to end through Skopos ----------------------------------------
+# ---- end to end through Client ----------------------------------------
 
 
-def _client(validator: Any, **tier_kwargs: Any) -> Skopos:
-    kanon = Kanon(
+def _client(validator: Any, **tier_kwargs: Any) -> Client:
+    config = Config(
         default_backend="fake",
         tiers={
             "pro": TierRule(
@@ -251,14 +251,14 @@ def _client(validator: Any, **tier_kwargs: Any) -> Skopos:
             )
         },
     )
-    taxis = Taxis()
-    taxis.register(FakeMechane())
-    return Skopos(kanon=kanon, taxis=taxis, validator=validator)
+    registry = BackendRegistry()
+    registry.register(FakeBackend())
+    return Client(config=config, registry=registry, validator=validator)
 
 
 def _pro_validator(**kwargs: Any) -> InMemoryApiKeyValidator:
     v = InMemoryApiKeyValidator()
-    v.register_simple("k", principal_id="u", tier=Klimax.PRO, **kwargs)
+    v.register_simple("k", principal_id="u", tier=Tier.PRO, **kwargs)
     return v
 
 
@@ -275,8 +275,8 @@ def test_costs_usage_report_and_retry_after_end_to_end() -> None:
     client.ocr.extract_text(png_bytes(), api_key="k")  # cost 2
     report = client.usage("k")
     assert (report.overall.used, report.overall.remaining, report.overall.limit) == (3, 7, 10)
-    assert report.per_praxis["ocr"].used == 2 and report.per_praxis["detect"].used == 1
-    assert report.per_praxis["face"].used == 0
+    assert report.per_task["ocr"].used == 2 and report.per_task["detect"].used == 1
+    assert report.per_task["face"].used == 0
     assert client.usage("k").overall.used == 3  # reading usage consumes nothing
     for _ in range(3):
         client.moderation.moderate(png_bytes(), api_key="k")  # cost 2 each -> 9
@@ -287,23 +287,23 @@ def test_costs_usage_report_and_retry_after_end_to_end() -> None:
         client.usage("nope")
 
 
-def test_usage_hides_praxeis_outside_key_scopes() -> None:
+def test_usage_hides_tasks_outside_key_scopes() -> None:
     report = _client(_pro_validator(scopes=["detect"])).usage("k")
-    assert set(report.per_praxis) == {"detect"}
+    assert set(report.per_task) == {"detect"}
 
 
-def test_per_praxis_quota_and_rollback_of_overall() -> None:
+def test_per_task_quota_and_rollback_of_overall() -> None:
     client = _client(
-        _pro_validator(), praxis_quotas={"detect": QuotaRule(limit=2, window_seconds=3600)}
+        _pro_validator(), task_quotas={"detect": QuotaRule(limit=2, window_seconds=3600)}
     )
     client.detection.detect(png_bytes(), api_key="k")
     client.detection.detect(png_bytes(), api_key="k")
     with pytest.raises(QuotaExceededError) as info:
         client.detection.detect(png_bytes(), api_key="k")
-    assert info.value.scope == "praxis:detect" and info.value.limit == 2
+    assert info.value.scope == "task:detect" and info.value.limit == 2
     report = client.usage("k")
     assert report.overall.used == 2  # denied call refunded from the overall quota
-    assert report.per_praxis["detect"].limit == 2
+    assert report.per_task["detect"].limit == 2
 
 
 def test_rate_limit_end_to_end_and_refund_when_quota_rejects() -> None:
@@ -318,7 +318,7 @@ def test_rate_limit_end_to_end_and_refund_when_quota_rejects() -> None:
     quota_client = _client(
         _pro_validator(),
         rate=RateRule(per_minute=60, burst=5),
-        praxis_quotas={"detect": QuotaRule(limit=1, window_seconds=3600)},
+        task_quotas={"detect": QuotaRule(limit=1, window_seconds=3600)},
     )
     quota_client.detection.detect(png_bytes(), api_key="k")  # 5 -> 4 tokens
     with pytest.raises(QuotaExceededError):

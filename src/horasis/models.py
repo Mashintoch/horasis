@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from horasis.foundation.sphalma import ConfigurationError, ModelDownloadError
+from horasis.foundation.errors import ConfigurationError, ModelDownloadError
 
 CACHE_ENV_VAR = "HORASIS_CACHE_DIR"
 _CHUNK = 256 * 1024

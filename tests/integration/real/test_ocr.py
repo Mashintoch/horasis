@@ -28,9 +28,9 @@ def check(result: OcrResult) -> None:
     assert isinstance(result, OcrResult)
     words = result.text.upper().replace("\n", " ").split()
     assert "HELLO" in words and "WORLD" in words, result.text
-    for glyph in result.glyphs:
-        assert_confidence(glyph.confidence)
-        assert_box_in_bounds(glyph.box, SIZE)
+    for region in result.regions:
+        assert_confidence(region.confidence)
+        assert_box_in_bounds(region.box, SIZE)
 
 
 def test_tesseract_reads_rendered_text() -> None:

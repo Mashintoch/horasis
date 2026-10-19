@@ -1,11 +1,11 @@
-"""Small helpers shared by the concrete `Mechane` adapters."""
+"""Small helpers shared by the concrete `Backend` adapters."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from typing import TypeVar
 
-from horasis.foundation.schemas import BoundingBox, Doxa, Point
+from horasis.foundation.schemas import BoundingBox, Confidence, Point
 
 T = TypeVar("T")
 
@@ -15,9 +15,9 @@ def clamp01(value: float) -> float:
     return max(0.0, min(1.0, float(value)))
 
 
-def doxa(value: float) -> Doxa:
-    """Build a `Doxa` from a possibly slightly out-of-range engine score."""
-    return Doxa(value=clamp01(value))
+def to_confidence(value: float) -> Confidence:
+    """Build a `Confidence` from a possibly slightly out-of-range engine score."""
+    return Confidence(value=clamp01(value))
 
 
 def polygon_to_box(points: Iterable[Sequence[float]]) -> BoundingBox:

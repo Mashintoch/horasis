@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from horasis import Skopos
+from horasis import Client
 from horasis.backend.ultralytics_adapter import UltralyticsAdapter
 from horasis.foundation.schemas import (
     ClassificationResult,
@@ -27,9 +27,9 @@ pytest.importorskip("ultralytics")
 
 
 @pytest.fixture(scope="module")
-def client() -> Skopos:
-    skopos = make_client()
-    skopos.taxis.register(
+def client() -> Client:
+    client = make_client()
+    client.registry.register(
         UltralyticsAdapter(
             detect_model=weights("yolo11n.pt"),
             classify_model=weights("yolo11n-cls.pt"),
@@ -37,10 +37,10 @@ def client() -> Skopos:
             pose_model=weights("yolo11n-pose.pt"),
         )
     )
-    return skopos
+    return client
 
 
-def test_detect_bus(client: Skopos) -> None:
+def test_detect_bus(client: Client) -> None:
     path = sample_image("bus.jpg")
     result = client.detection.detect(path, api_key=KEY)
     assert isinstance(result, DetectionResult)
@@ -52,7 +52,7 @@ def test_detect_bus(client: Skopos) -> None:
         assert_box_in_bounds(det.box, size)
 
 
-def test_classify(client: Skopos) -> None:
+def test_classify(client: Client) -> None:
     result = client.classification.classify(sample_image("bus.jpg"), api_key=KEY)
     assert isinstance(result, ClassificationResult)
     assert result.entries
@@ -63,7 +63,7 @@ def test_classify(client: Skopos) -> None:
     assert scores == sorted(scores, reverse=True)
 
 
-def test_segment_bus(client: Skopos) -> None:
+def test_segment_bus(client: Client) -> None:
     path = sample_image("bus.jpg")
     result = client.segmentation.segment(path, api_key=KEY)
     assert isinstance(result, SegmentationResult)
@@ -78,7 +78,7 @@ def test_segment_bus(client: Skopos) -> None:
             assert -1 <= x <= width + 1 and -1 <= y <= height + 1
 
 
-def test_pose_zidane(client: Skopos) -> None:
+def test_pose_zidane(client: Client) -> None:
     path = sample_image("zidane.jpg")
     result = client.pose.estimate(path, api_key=KEY)
     assert isinstance(result, PoseResult)

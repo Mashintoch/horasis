@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-class Sphalma(Exception):
+class HorasisError(Exception):
     """Base class for every exception raised by `horasis`.
 
     Attributes:
@@ -19,30 +19,27 @@ class Sphalma(Exception):
         return f"{type(self).__name__}({self.message!r}, context={self.context!r})"
 
 
-HorasisError = Sphalma
+class ConfigurationError(HorasisError):
+    """Raised when :class:`~horasis.foundation.config.Config` configuration is invalid."""
 
 
-class ConfigurationError(Sphalma):
-    """Raised when :class:`~horasis.foundation.kanon.Kanon` configuration is invalid."""
-
-
-class ValidationError(Sphalma):
+class ValidationError(HorasisError):
     """Raised when caller-supplied input fails validation before reaching a backend."""
 
 
-class AccessDeniedError(Sphalma):
+class AccessDeniedError(HorasisError):
     """Raised by the access layer when a principal lacks permission for an action."""
 
 
 class QuotaExceededError(AccessDeniedError):
-    """Raised by :class:`~horasis.access.metron.Metron` when a quota is exhausted.
+    """Raised by :class:`~horasis.access.quota.QuotaManager` when a quota is exhausted.
 
     Attributes:
         limit: The limit that was hit.
         used: Usage that the rejected call would have reached.
         window_seconds: Length of the quota window.
         retry_after: Seconds until the window resets (``None`` if unknown).
-        scope: Which limit: ``"quota"`` or ``"praxis:<name>"``.
+        scope: Which limit: ``"quota"`` or ``"task:<name>"``.
     """
 
     def __init__(
@@ -71,7 +68,7 @@ class RateLimitedError(AccessDeniedError):
         limit: Calls per minute allowed by the rule that was hit.
         retry_after: Seconds until enough tokens refill (``None`` if the call
             costs more than the bucket can ever hold).
-        scope: ``"rate"`` or ``"rate:<praxis>"``.
+        scope: ``"rate"`` or ``"rate:<task>"``.
     """
 
     def __init__(
@@ -89,23 +86,23 @@ class RateLimitedError(AccessDeniedError):
         self.scope = scope
 
 
-class BackendUnavailableError(Sphalma):
+class BackendUnavailableError(HorasisError):
     """Raised when no backend can be resolved for a requested task."""
 
 
 class NoBackendError(BackendUnavailableError):
-    """Raised when no registered backend can serve a praxis.
+    """Raised when no registered backend can serve a task.
 
-    ``context`` carries ``praxis``, the ``registered`` backend names and the
+    ``context`` carries ``task``, the ``registered`` backend names and the
     ``considered`` names that were checked, so callers can explain the gap.
     """
 
 
-class ModelDownloadError(Sphalma):
+class ModelDownloadError(HorasisError):
     """Raised when a model file cannot be downloaded or fails its checksum."""
 
 
-class AdapterError(Sphalma):
+class AdapterError(HorasisError):
     """Raised when a backend adapter fails to execute inference."""
 
 
@@ -131,11 +128,11 @@ class RemoteError(AdapterError):
         self.retryable = retryable
 
 
-class VisualizationUnavailableError(Sphalma):
+class VisualizationUnavailableError(HorasisError):
     """Raised when `horasis.viz` is used without its optional dependency installed."""
 
 
-class PluginError(Sphalma):
+class PluginError(HorasisError):
     """Raised when a third-party plugin fails to load or register."""
 
 

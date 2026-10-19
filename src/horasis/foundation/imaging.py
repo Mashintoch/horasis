@@ -1,9 +1,9 @@
-"""Image input handling for `Physis`.
+"""Image input handling for `Image`.
 
 Turns whatever a caller hands us (path, bytes, URL, PIL image, numpy array)
-into a validated, EXIF-corrected RGB image carried on a :class:`Physis`.
+into a validated, EXIF-corrected RGB image carried on a :class:`Image`.
 Decoding happens once, at the API boundary; backends then read
-``physis.pixels`` via :func:`load_rgb` and never touch raw caller input.
+``img.pixels`` via :func:`load_rgb` and never touch raw caller input.
 
 Security notes:
     * URLs are fetched only when ``InputPolicy.allow_urls`` is True. Only
@@ -29,16 +29,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias
 from urllib.parse import urljoin, urlparse
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image as PILImage
+from PIL import ImageOps, UnidentifiedImageError
 
-from horasis.foundation.kanon import InputPolicy
-from horasis.foundation.schemas import Physis
-from horasis.foundation.sphalma import ValidationError
+from horasis.foundation.config import InputPolicy
+from horasis.foundation.errors import ValidationError
+from horasis.foundation.schemas import Image
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
-    ImageInput: TypeAlias = str | Path | bytes | Physis | Image.Image | npt.NDArray[Any]
+    ImageInput: TypeAlias = str | Path | bytes | Image | PILImage.Image | npt.NDArray[Any]
 else:
     ImageInput = Any
 
@@ -47,7 +48,7 @@ _DECODE_ERRORS = (
     OSError,
     SyntaxError,
     ValueError,
-    Image.DecompressionBombError,
+    PILImage.DecompressionBombError,
 )
 
 
@@ -56,7 +57,7 @@ def is_url(text: str) -> bool:
     return urlparse(text).scheme in ("http", "https")
 
 
-def decode_image(data: bytes, policy: InputPolicy | None = None) -> Image.Image:
+def decode_image(data: bytes, policy: InputPolicy | None = None) -> PILImage.Image:
     """Decode encoded image `data` to an upright RGB image, enforcing `policy`.
 
     Raises:
@@ -72,7 +73,7 @@ def decode_image(data: bytes, policy: InputPolicy | None = None) -> Image.Image:
             context={"size": len(data), "max_bytes": policy.max_bytes},
         )
     try:
-        opened = Image.open(io.BytesIO(data))
+        opened = PILImage.open(io.BytesIO(data))
         fmt = (opened.format or "").upper()
         allowed = {f.upper() for f in policy.allowed_formats}
         if fmt not in allowed:
@@ -84,7 +85,7 @@ def decode_image(data: bytes, policy: InputPolicy | None = None) -> Image.Image:
                 f"Image is {opened.width}x{opened.height} pixels; the limit is {policy.max_pixels}"
             )
         opened.load()
-        img: Image.Image = opened
+        img: PILImage.Image = opened
         if policy.apply_exif_orientation:
             img = ImageOps.exif_transpose(img) or img
         return img.convert("RGB")
@@ -92,7 +93,7 @@ def decode_image(data: bytes, policy: InputPolicy | None = None) -> Image.Image:
         raise ValidationError(f"Could not decode image: {exc}") from exc
 
 
-def array_to_image(array: Any, policy: InputPolicy | None = None) -> Image.Image:
+def array_to_image(array: Any, policy: InputPolicy | None = None) -> PILImage.Image:
     """Convert a numpy array to an RGB image.
 
     Accepts ``(H, W)``, ``(H, W, 1)``, ``(H, W, 3)`` or ``(H, W, 4)`` arrays
@@ -127,7 +128,7 @@ def array_to_image(array: Any, policy: InputPolicy | None = None) -> Image.Image
         arr = np.clip(arr, 0, 255).astype(np.uint8)
     else:
         raise ValidationError(f"Unsupported array dtype {arr.dtype}")
-    return Image.fromarray(arr).convert("RGB")
+    return PILImage.fromarray(arr).convert("RGB")
 
 
 MAX_REDIRECTS = 3
@@ -310,14 +311,14 @@ def _read_image_body(
     return b"".join(chunks)
 
 
-def _physis_from_image(img: Image.Image, *, source: str, path: str | Path | None = None) -> Physis:
-    return Physis(source=source, path=path, pixels=img, width=img.width, height=img.height)
+def _image_from_pil(img: PILImage.Image, *, source: str, path: str | Path | None = None) -> Image:
+    return Image(source=source, path=path, pixels=img, width=img.width, height=img.height)
 
 
-def to_physis(image: Any, policy: InputPolicy | None = None) -> Physis:
-    """Normalize any supported image input into a decoded `Physis`.
+def to_image(image: Any, policy: InputPolicy | None = None) -> Image:
+    """Normalize any supported image input into a decoded `Image`.
 
-    Supported: `Physis`, ``str``/``Path`` file paths, ``bytes``, PIL images,
+    Supported: `Image`, ``str``/``Path`` file paths, ``bytes``, PIL images,
     numpy arrays, and http(s) URL strings (only if ``policy.allow_urls``).
 
     Raises:
@@ -326,32 +327,32 @@ def to_physis(image: Any, policy: InputPolicy | None = None) -> Physis:
     """
     policy = policy or InputPolicy()
 
-    if isinstance(image, Physis):
+    if isinstance(image, Image):
         if image.pixels is not None:
             return image
         if image.data is not None:
             img = decode_image(image.data, policy)
         elif image.path is not None:
-            return to_physis(str(image.path), policy)
+            return to_image(str(image.path), policy)
         else:
-            raise ValidationError("Physis has neither `pixels`, `data`, nor `path` set")
+            raise ValidationError("Image has neither `pixels`, `data`, nor `path` set")
         return image.model_copy(update={"pixels": img, "width": img.width, "height": img.height})
 
     if isinstance(image, bytes | bytearray | memoryview):
-        return _physis_from_image(decode_image(bytes(image), policy), source="<bytes>")
+        return _image_from_pil(decode_image(bytes(image), policy), source="<bytes>")
 
     if isinstance(image, str | Path):
         text = str(image)
         if isinstance(image, str) and is_url(text):
             if not policy.allow_urls:
                 raise ValidationError(
-                    "URL inputs are disabled. Set Kanon.inputs.allow_urls=True to opt in, "
+                    "URL inputs are disabled. Set Config.inputs.allow_urls=True to opt in, "
                     "or download the image yourself and pass bytes."
                 )
             data = fetch_url(
                 text, timeout=policy.url_timeout_seconds, max_bytes=policy.max_bytes, policy=policy
             )
-            return _physis_from_image(decode_image(data, policy), source=text)
+            return _image_from_pil(decode_image(data, policy), source=text)
         path = Path(image)
         if not path.is_file():
             raise ValidationError(f"Image file not found: {text}")
@@ -359,18 +360,18 @@ def to_physis(image: Any, policy: InputPolicy | None = None) -> Physis:
             raise ValidationError(
                 f"Image file is {path.stat().st_size} bytes; the limit is {policy.max_bytes} bytes"
             )
-        return _physis_from_image(decode_image(path.read_bytes(), policy), source=text, path=path)
+        return _image_from_pil(decode_image(path.read_bytes(), policy), source=text, path=path)
 
-    if isinstance(image, Image.Image):
-        return _physis_from_image(_normalize_pil(image, policy), source="<pil>")
+    if isinstance(image, PILImage.Image):
+        return _image_from_pil(_normalize_pil(image, policy), source="<pil>")
 
     if type(image).__module__.split(".")[0] == "numpy":
-        return _physis_from_image(array_to_image(image, policy), source="<ndarray>")
+        return _image_from_pil(array_to_image(image, policy), source="<ndarray>")
 
     raise ValidationError(f"Unsupported image input type: {type(image).__name__}")
 
 
-def _normalize_pil(img: Image.Image, policy: InputPolicy) -> Image.Image:
+def _normalize_pil(img: PILImage.Image, policy: InputPolicy) -> PILImage.Image:
     if img.width * img.height > policy.max_pixels:
         raise ValidationError(
             f"Image is {img.width}x{img.height} pixels; the limit is {policy.max_pixels}"
@@ -380,20 +381,20 @@ def _normalize_pil(img: Image.Image, policy: InputPolicy) -> Image.Image:
     return img.convert("RGB")
 
 
-def load_rgb(image: Physis, policy: InputPolicy | None = None) -> Image.Image:
+def load_rgb(image: Image, policy: InputPolicy | None = None) -> PILImage.Image:
     """Return the RGB pixels of `image`, decoding them if not yet loaded.
 
     Backends call this instead of reading ``path``/``data`` themselves, so
     every backend sees identical, validated, upright pixels.
     """
     if image.pixels is not None:
-        pixels: Image.Image = image.pixels
+        pixels: PILImage.Image = image.pixels
         return pixels
-    decoded: Image.Image = to_physis(image, policy).pixels
+    decoded: PILImage.Image = to_image(image, policy).pixels
     return decoded
 
 
-def encode_image(image: Physis, *, fmt: str = "JPEG", quality: int = 95) -> bytes:
+def encode_image(image: Image, *, fmt: str = "JPEG", quality: int = 95) -> bytes:
     """Encode `image` for transport (e.g. to a remote server). `fmt` is JPEG or PNG."""
     buf = io.BytesIO()
     rgb = load_rgb(image)

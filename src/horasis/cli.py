@@ -24,15 +24,16 @@ from typing import Any
 
 from horasis import __version__, models
 from horasis.access.keys import InMemoryApiKeyValidator
-from horasis.access.klimax import Klimax
 from horasis.access.stores import redis_backends
-from horasis.api.skopos import Skopos
+from horasis.access.tiers import Tier
+from horasis.api.client import Client
+from horasis.backend.base import Backend
 from horasis.backend.easyocr_adapter import EasyOCRAdapter
 from horasis.backend.face_adapter import YuNetFaceAdapter
-from horasis.backend.mechane import Mechane
 from horasis.backend.moderation_adapter import TransformersModerationAdapter
 from horasis.backend.tesseract_adapter import TesseractAdapter
-from horasis.foundation.kanon import InputPolicy, Kanon
+from horasis.foundation.config import Config, InputPolicy
+from horasis.foundation.errors import HorasisError, PluginError
 from horasis.foundation.schemas import (
     ClassificationResult,
     DetectionResult,
@@ -40,11 +41,10 @@ from horasis.foundation.schemas import (
     ModerationResult,
     OcrResult,
     PoseResult,
+    Result,
     SegmentationResult,
-    Theoria,
 )
-from horasis.foundation.sphalma import PluginError, Sphalma
-from horasis.plugins.prosthesis import Prosthesis
+from horasis.plugins.loader import PluginLoader
 
 CLI_KEY = "cli-local"
 
@@ -60,7 +60,7 @@ COMMANDS: dict[str, tuple[str, str]] = {
 }
 
 
-def _default_backends(args: argparse.Namespace) -> list[Mechane]:
+def _default_backends(args: argparse.Namespace) -> list[Backend]:
     """Optional backends registered next to Ultralytics (all load lazily)."""
     return [
         EasyOCRAdapter(),
@@ -70,34 +70,34 @@ def _default_backends(args: argparse.Namespace) -> list[Mechane]:
     ]
 
 
-def _build_client(args: argparse.Namespace) -> tuple[Skopos, list[tuple[str, str]]]:
+def _build_client(args: argparse.Namespace) -> tuple[Client, list[tuple[str, str]]]:
     """Create the client; also returns ``(plugin_name, status)`` for each plugin found."""
-    kanon = Kanon.from_yaml(args.config) if args.config else Kanon.default()
+    config = Config.from_yaml(args.config) if args.config else Config.default()
     update: dict[str, Any] = {"device": args.device}
     if args.allow_urls:
         update["inputs"] = InputPolicy(allow_urls=True)
-    if not kanon.backend_order:
+    if not config.backend_order:
         update["backend_order"] = {"ocr": ["easyocr", "tesseract"]}
-    kanon = kanon.model_copy(update=update)
+    config = config.model_copy(update=update)
 
     validator = InMemoryApiKeyValidator()
-    validator.register_simple(CLI_KEY, principal_id="cli", tier=Klimax.ENTERPRISE)
-    client = Skopos.build(kanon=kanon, validator=validator, backends=_default_backends(args))
+    validator.register_simple(CLI_KEY, principal_id="cli", tier=Tier.ENTERPRISE)
+    client = Client.build(config=config, validator=validator, backends=_default_backends(args))
 
     plugins: list[tuple[str, str]] = []
-    prosthesis = Prosthesis()
-    for ep in prosthesis.discover_entry_points():
+    loader = PluginLoader()
+    for ep in loader.discover_entry_points():
         try:
-            backend = prosthesis.load(ep)
+            backend = loader.load(ep)
         except PluginError as exc:
             plugins.append((ep.name, f"failed to load: {exc.message}"))
             continue
-        client.taxis.register(backend)
+        client.registry.register(backend)
         plugins.append((backend.name, "plugin"))
     return client, plugins
 
 
-def format_result(result: Theoria) -> str:
+def format_result(result: Result) -> str:
     """Human-readable rendering of any result type."""
 
     def box(b: Any) -> str:
@@ -143,7 +143,7 @@ def _add_common(p: argparse.ArgumentParser, *, image: bool) -> None:
     else:
         p.add_argument("--json", action="store_true", help="print as JSON")
         p.add_argument("--face-model", help=argparse.SUPPRESS)
-    p.add_argument("--config", help="Kanon YAML config file")
+    p.add_argument("--config", help="YAML config file")
     p.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default="auto")
     p.add_argument("--allow-urls", action="store_true", help="allow http(s) image URLs")
 
@@ -188,7 +188,7 @@ def _cmd_image(args: argparse.Namespace, out: Callable[[str], None]) -> int:
     client, _ = _build_client(args)
     attr, method = COMMANDS[args.command]
     call = getattr(getattr(client, attr), method)
-    result: Theoria = call(args.image, api_key=CLI_KEY, backend=args.backend)
+    result: Result = call(args.image, api_key=CLI_KEY, backend=args.backend)
     if args.min_conf is not None:
         result = result.filter(min_conf=args.min_conf)
     if args.draw:
@@ -224,12 +224,12 @@ def _cmd_backends(args: argparse.Namespace, out: Callable[[str], None]) -> int:
     client, plugins = _build_client(args)
     plugin_status = dict(plugins)
     rows: list[dict[str, Any]] = []
-    for name in client.taxis.names():
-        backend = client.taxis.get(name)
+    for name in client.registry.names():
+        backend = client.registry.get(name)
         rows.append(
             {
                 "name": name,
-                "praxeis": sorted(p.value for p in backend.supported_praxeis),
+                "tasks": sorted(p.value for p in backend.supported_tasks),
                 "origin": "plugin" if plugin_status.get(name) == "plugin" else "builtin",
                 "loaded": backend.is_loaded(),
             }
@@ -239,19 +239,19 @@ def _cmd_backends(args: argparse.Namespace, out: Callable[[str], None]) -> int:
         out(json.dumps({"backends": rows, "failed_plugins": failed}, indent=2))
         return 0
     for row in rows:
-        out(f"{row['name']:<16} {row['origin']:<8} {', '.join(row['praxeis'])}")
+        out(f"{row['name']:<16} {row['origin']:<8} {', '.join(row['tasks'])}")
     for f in failed:
         out(f"{f['name']:<16} plugin   {f['error']}")
     return 0
 
 
-def warn_if_limiter_not_shared(workers: int, client: Skopos) -> bool:
+def warn_if_limiter_not_shared(workers: int, client: Client) -> bool:
     """Log a warning when several workers each keep their own rate-limit buckets."""
     if workers > 1 and not getattr(client.rate_limiter, "shared", False):
         logging.getLogger("horasis").warning(
             "Serving with %d workers but the rate limiter is in-process: every worker enforces "
             "its own per-minute buckets, so the effective limit is up to %dx the configured one. "
-            "Pass --redis-url (or set Kanon.rate_limit_store: redis) to share them.",
+            "Pass --redis-url (or set Config.rate_limit_store: redis) to share them.",
             workers,
             workers,
         )
@@ -259,27 +259,27 @@ def warn_if_limiter_not_shared(workers: int, client: Skopos) -> bool:
     return False
 
 
-def _serve_client(args: argparse.Namespace) -> Skopos:
-    kanon = Kanon.from_yaml(args.config) if args.config else Kanon.default()
+def _serve_client(args: argparse.Namespace) -> Client:
+    config = Config.from_yaml(args.config) if args.config else Config.default()
     validator = InMemoryApiKeyValidator()
     if args.keys_file:
         for key, spec in json.loads(Path(args.keys_file).read_text(encoding="utf-8")).items():
             validator.register_simple(
                 key,
                 principal_id=spec["principal_id"],
-                tier=Klimax.from_value(spec["tier"]),
+                tier=Tier.from_value(spec["tier"]),
                 scopes=spec.get("scopes"),
             )
     elif env_key := os.environ.get("HORASIS_API_KEY"):
-        validator.register_simple(env_key, principal_id="env", tier=Klimax.ENTERPRISE)
+        validator.register_simple(env_key, principal_id="env", tier=Tier.ENTERPRISE)
     else:
-        raise Sphalma("No API keys configured: pass --keys-file or set HORASIS_API_KEY")
+        raise HorasisError("No API keys configured: pass --keys-file or set HORASIS_API_KEY")
     update: dict[str, Any] = {"device": args.device}
     extra: dict[str, Any] = {}
     if args.redis_url:
         extra["quota_store"], extra["rate_limiter"] = redis_backends(url=args.redis_url)
-    client = Skopos.build(
-        kanon=kanon.model_copy(update=update),
+    client = Client.build(
+        config=config.model_copy(update=update),
         validator=validator,
         backends=_default_backends(args),
         **extra,
@@ -305,7 +305,7 @@ def _cmd_serve(args: argparse.Namespace, out: Callable[[str], None], argv: Seque
 
         from horasis.server import create_app
     except ImportError:
-        raise Sphalma("`horasis serve` needs: pip install 'horasis[server]'") from None
+        raise HorasisError("`horasis serve` needs: pip install 'horasis[server]'") from None
     client = _serve_client(args)
     out(f"serving on http://{args.host}:{args.port}")
     if args.workers > 1:
@@ -333,7 +333,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "backends":
             return _cmd_backends(args, print)
         return _cmd_serve(args, print, sys.argv[1:] if argv is None else argv)
-    except Sphalma as exc:
+    except HorasisError as exc:
         print(f"error: {exc.message}", file=sys.stderr)
         return 1
 

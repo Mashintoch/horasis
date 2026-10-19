@@ -8,21 +8,21 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from horasis.foundation.imaging import load_rgb, to_physis
+from horasis.foundation.errors import ValidationError, VisualizationUnavailableError
+from horasis.foundation.imaging import load_rgb, to_image
 from horasis.foundation.schemas import (
     ClassificationResult,
     Detection,
     DetectionResult,
     FaceResult,
-    Kinesis,
+    Image,
     ModerationResult,
     OcrResult,
-    Physis,
     PoseResult,
     SegmentationResult,
+    Video,
     VideoDetectionResult,
 )
-from horasis.foundation.sphalma import ValidationError, VisualizationUnavailableError
 
 if TYPE_CHECKING:
     from PIL import Image as PILImageModule
@@ -32,19 +32,20 @@ if TYPE_CHECKING:
 
 def _load_pillow() -> Any:
     try:
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image as PILImageModule
+        from PIL import ImageDraw, ImageFont
     except ImportError as exc:
         raise VisualizationUnavailableError(
             "The 'Pillow' package is required for horasis.viz. "
             "Install it with: pip install 'horasis[viz]'"
         ) from exc
-    return Image, ImageDraw, ImageFont
+    return PILImageModule, ImageDraw, ImageFont
 
 
 def _open_image(image: Any) -> PILImage:
     """Load any supported image input as upright RGB via the shared loader."""
     _load_pillow()
-    return load_rgb(to_physis(image))
+    return load_rgb(to_image(image))
 
 
 def _color_for_label(label: str) -> tuple[int, int, int]:
@@ -128,7 +129,7 @@ def _resolve_image_output_path(output_path: str | Path | None) -> tuple[Path, di
 
 
 def render_detections(
-    image: str | Path | bytes | Physis,
+    image: str | Path | bytes | Image,
     result: DetectionResult,
     *,
     show_labels: bool = True,
@@ -142,8 +143,8 @@ def render_detections(
     """Draw `result.detections` on `image` and return the annotated image.
 
     Args:
-        image: The original input -- a file path, raw bytes, or `Physis`.
-        result: A `DetectionResult` produced by `Skopos.detection.detect(...)`.
+        image: The original input -- a file path, raw bytes, or `Image`.
+        result: A `DetectionResult` produced by `Client.detection.detect(...)`.
         show_labels: Draw each detection's class label.
         show_confidence: Draw each detection's confidence score.
         box_color: Fixed RGB color for every box; if omitted, a color is
@@ -176,7 +177,7 @@ def render_detections(
 
 
 def render_faces(
-    image: str | Path | bytes | Physis,
+    image: str | Path | bytes | Image,
     result: FaceResult,
     *,
     show_labels: bool = True,
@@ -270,7 +271,7 @@ def _open_video_writer(cv2: Any, path: str, fps: float, width: int, height: int)
     return _Cv2VideoWriter(cv2, path, fps, width, height)
 
 
-def _video_capture_source(video: str | Path | bytes | Kinesis) -> tuple[Any, str | None]:
+def _video_capture_source(video: str | Path | bytes | Video) -> tuple[Any, str | None]:
     """Normalize `video` into something `cv2.VideoCapture` can open.
 
     Returns (source, temp_file_path_to_clean_up_or_None). Mirrors
@@ -278,35 +279,35 @@ def _video_capture_source(video: str | Path | bytes | Kinesis) -> tuple[Any, str
     imported, since `horasis.viz` intentionally depends only on the
     foundation layer, not the backend layer.
     """
-    if isinstance(video, Kinesis):
-        kinesis = video
+    if isinstance(video, Video):
+        vid = video
     elif isinstance(video, bytes):
-        kinesis = Kinesis.from_bytes(video)
+        vid = Video.from_bytes(video)
     elif isinstance(video, (str, Path)):
         source = str(video)
-        kinesis = (
-            Kinesis.from_url(source)
+        vid = (
+            Video.from_url(source)
             if source.startswith(("http://", "https://"))
-            else Kinesis.from_path(source)
+            else Video.from_path(source)
         )
     else:
         raise ValidationError(f"Unsupported video input type: {type(video).__name__}")
 
-    if kinesis.url is not None:
-        return kinesis.url, None
-    if kinesis.path is not None:
-        return str(kinesis.path), None
-    if kinesis.data is not None:
+    if vid.url is not None:
+        return vid.url, None
+    if vid.path is not None:
+        return str(vid.path), None
+    if vid.data is not None:
         import tempfile
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as temp:
-            temp.write(kinesis.data)
+            temp.write(vid.data)
         return temp.name, temp.name
-    raise ValidationError("Kinesis has neither `path`, `url`, nor `data` set")
+    raise ValidationError("Video has neither `path`, `url`, nor `data` set")
 
 
 def render_video(
-    video: str | Path | bytes | Kinesis,
+    video: str | Path | bytes | Video,
     result: VideoDetectionResult,
     *,
     output_path: str | Path,
@@ -327,7 +328,7 @@ def render_video(
 
     Args:
         video: The same source originally passed to `detect_video` --
-            a local path, URL, raw bytes, or `Kinesis`.
+            a local path, URL, raw bytes, or `Video`.
         result: The `VideoDetectionResult` from `detect_video`.
         output_path: Where to write the annotated video (e.g. `"out.mp4"`).
         show_labels: Draw each detection's class label.
@@ -414,7 +415,7 @@ def render_ocr(
     show_confidence: bool = False,
     **_ignored: Any,
 ) -> PILImage:
-    """Draw each OCR glyph's polygon (or box) with its text; nothing is saved."""
+    """Draw each OCR region's polygon (or box) with its text; nothing is saved."""
     _, ImageDraw, ImageFont = _load_pillow()
     annotated = _open_image(image).copy()
     draw = ImageDraw.Draw(annotated)
@@ -422,7 +423,7 @@ def render_ocr(
         font = ImageFont.truetype("arial.ttf", font_size)
     except OSError:
         font = ImageFont.load_default()
-    for g in result.glyphs:
+    for g in result.regions:
         color = box_color or (230, 40, 40)
         if g.polygon:
             draw.polygon([tuple(pt) for pt in g.polygon], outline=color, width=line_width)

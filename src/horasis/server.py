@@ -1,4 +1,4 @@
-"""HTTP server exposing a :class:`Skopos` client (extra: ``horasis[server]``).
+"""HTTP server exposing a :class:`Client` client (extra: ``horasis[server]``).
 
 This is what :class:`~horasis.backend.remote_adapter.RemoteAdapter` talks to,
 but any HTTP client works::
@@ -8,14 +8,14 @@ but any HTTP client works::
 
 Endpoints:
 
-* ``GET  /health`` -- liveness and the praxeis each backend serves (no auth).
+* ``GET  /health`` -- liveness and the tasks each backend serves (no auth).
 * ``GET  /usage``  -- used/remaining quota for the caller (``X-API-Key``).
-* ``POST /v1/{praxis}`` -- run one of ``detect classify ocr face moderate
+* ``POST /v1/{task}`` -- run one of ``detect classify ocr face moderate
   segment pose`` on an uploaded ``image`` (multipart). Optional form fields:
-  ``options`` (JSON object, whitelisted per praxis) and ``backend``.
+  ``options`` (JSON object, whitelisted per task) and ``backend``.
 
 Errors are ``{"error": {"type": ..., "message": ...}}`` with the status codes
-documented on :func:`create_app`. Build the app with your own ``Skopos`` so you
+documented on :func:`create_app`. Build the app with your own ``Client`` so you
 control the API-key validator, quota store, rate limits and backends.
 """
 
@@ -27,20 +27,20 @@ from collections.abc import Callable
 from typing import Any
 
 from horasis import __version__
-from horasis.api.skopos import Skopos
-from horasis.foundation.schemas import Praxis, Theoria
-from horasis.foundation.sphalma import (
+from horasis.api.client import Client
+from horasis.foundation.errors import (
     AccessDeniedError,
     AdapterError,
     BackendUnavailableError,
     ExpiredApiKeyError,
+    HorasisError,
     InvalidApiKeyError,
     QuotaExceededError,
     RateLimitedError,
     RevokedApiKeyError,
-    Sphalma,
     ValidationError,
 )
+from horasis.foundation.schemas import Result, Task
 
 try:
     from fastapi import FastAPI, File, Form, Header, Request, UploadFile
@@ -51,13 +51,13 @@ except ImportError as exc:  # pragma: no cover - exercised only without the extr
     ) from exc
 
 
-class UploadTooLargeError(Sphalma):
-    """The uploaded image exceeded ``Kanon.inputs.max_bytes``."""
+class UploadTooLargeError(HorasisError):
+    """The uploaded image exceeded ``Config.inputs.max_bytes``."""
 
 
 _Num = (int, float)
 
-#: Options a caller may pass per praxis, with their types. Anything else is
+#: Options a caller may pass per task, with their types. Anything else is
 #: rejected: options are forwarded to model code, so they must be whitelisted.
 ALLOWED_OPTIONS: dict[str, dict[str, type | tuple[type, ...]]] = {
     "detect": {
@@ -77,8 +77,8 @@ ALLOWED_OPTIONS: dict[str, dict[str, type | tuple[type, ...]]] = {
 }
 
 
-def parse_options(praxis: str, raw: str | None) -> dict[str, Any]:
-    """Parse and validate the JSON ``options`` form field for `praxis`."""
+def parse_options(task: str, raw: str | None) -> dict[str, Any]:
+    """Parse and validate the JSON ``options`` form field for `task`."""
     if not raw:
         return {}
     try:
@@ -87,11 +87,11 @@ def parse_options(praxis: str, raw: str | None) -> dict[str, Any]:
         raise ValidationError(f"options is not valid JSON: {exc}") from exc
     if not isinstance(options, dict):
         raise ValidationError("options must be a JSON object")
-    allowed = ALLOWED_OPTIONS[praxis]
+    allowed = ALLOWED_OPTIONS[task]
     for key, value in options.items():
         if key not in allowed:
             raise ValidationError(
-                f"Option {key!r} is not allowed for {praxis!r}; allowed: {sorted(allowed)}"
+                f"Option {key!r} is not allowed for {task!r}; allowed: {sorted(allowed)}"
             )
         wants_bool = allowed[key] is bool
         if isinstance(value, bool) != wants_bool or not isinstance(value, allowed[key]):
@@ -111,7 +111,7 @@ def _error(status: int, kind: str, message: str, **extra: Any) -> JSONResponse:
 
 def error_response(exc: Exception) -> JSONResponse:
     """Map an exception to the wire error format (also used by the tests)."""
-    message = exc.message if isinstance(exc, Sphalma) else "Internal server error"
+    message = exc.message if isinstance(exc, HorasisError) else "Internal server error"
     if isinstance(exc, ExpiredApiKeyError):
         return _error(401, "expired_api_key", message)
     if isinstance(exc, RevokedApiKeyError):
@@ -151,8 +151,8 @@ def error_response(exc: Exception) -> JSONResponse:
     return _error(500, "internal_error", message)
 
 
-def _dispatch(client: Skopos, praxis: str) -> Callable[..., Theoria]:
-    table: dict[str, Callable[..., Theoria]] = {
+def _dispatch(client: Client, task: str) -> Callable[..., Result]:
+    table: dict[str, Callable[..., Result]] = {
         "detect": client.detection.detect,
         "classify": client.classification.classify,
         "ocr": client.ocr.extract_text,
@@ -161,23 +161,23 @@ def _dispatch(client: Skopos, praxis: str) -> Callable[..., Theoria]:
         "segment": client.segmentation.segment,
         "pose": client.pose.estimate,
     }
-    return table[praxis]
+    return table[task]
 
 
-def create_app(client: Skopos) -> FastAPI:
+def create_app(client: Client) -> FastAPI:
     """Build the FastAPI app serving `client`.
 
     Status codes: 401 bad/expired/revoked key, 403 not allowed (tier/scope),
-    404 unknown praxis, 413 upload too large, 422 invalid input or options,
+    404 unknown task, 413 upload too large, 422 invalid input or options,
     429 quota or rate limit (with ``Retry-After``), 501 no backend for the
-    praxis, 500 backend failure.
+    task, 500 backend failure.
     """
     app = FastAPI(
         title="horasis", version=__version__, docs_url=None, redoc_url=None, openapi_url=None
     )
 
-    @app.exception_handler(Sphalma)
-    async def _handle_sphalma(_: Request, exc: Sphalma) -> JSONResponse:
+    @app.exception_handler(HorasisError)
+    async def _handle_horasis_error(_: Request, exc: HorasisError) -> JSONResponse:
         return error_response(exc)
 
     @app.exception_handler(Exception)
@@ -190,8 +190,8 @@ def create_app(client: Skopos) -> FastAPI:
             "status": "ok",
             "version": __version__,
             "backends": {
-                name: sorted(p.value for p in client.taxis.get(name).supported_praxeis)
-                for name in client.taxis.names()
+                name: sorted(p.value for p in client.registry.get(name).supported_tasks)
+                for name in client.registry.names()
             },
         }
 
@@ -201,26 +201,26 @@ def create_app(client: Skopos) -> FastAPI:
             raise InvalidApiKeyError("Missing X-API-Key header")
         return client.usage(x_api_key).model_dump(mode="json")
 
-    @app.post("/v1/{praxis}")
+    @app.post("/v1/{task}")
     def infer(
-        praxis: str,
+        task: str,
         image: UploadFile = File(...),  # noqa: B008
         options: str | None = Form(default=None),
         backend: str | None = Form(default=None),
         x_api_key: str | None = Header(default=None),
     ) -> Any:
-        if praxis not in {p.value for p in Praxis}:
-            return _error(404, "unknown_praxis", f"Unknown praxis {praxis!r}")
+        if task not in {p.value for p in Task}:
+            return _error(404, "unknown_task", f"Unknown task {task!r}")
         if not x_api_key:
             raise InvalidApiKeyError("Missing X-API-Key header")
-        parsed = parse_options(praxis, options)
-        limit = client.kanon.inputs.max_bytes
+        parsed = parse_options(task, options)
+        limit = client.config.inputs.max_bytes
         data = image.file.read(limit + 1)
         if len(data) > limit:
             raise UploadTooLargeError(f"Upload exceeds the {limit}-byte limit")
-        call = _dispatch(client, praxis)
+        call = _dispatch(client, task)
         kwargs: dict[str, Any] = {"api_key": x_api_key, "backend": backend}
-        if praxis == "detect":
+        if task == "detect":
             kwargs["estimate_demographics"] = bool(parsed.pop("estimate_demographics", False))
         if parsed:
             kwargs["options"] = parsed

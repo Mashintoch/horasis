@@ -5,18 +5,18 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from horasis.backend._common import box_to_polygon, doxa
-from horasis.backend.mechane import Mechane
+from horasis.backend._common import box_to_polygon, to_confidence
+from horasis.backend.base import Backend
+from horasis.foundation.errors import AdapterError, BackendUnavailableError, HorasisError
 from horasis.foundation.imaging import load_rgb
-from horasis.foundation.schemas import BoundingBox, Glyph, OcrResult, Physis, Praxis, Theoria
-from horasis.foundation.sphalma import AdapterError, BackendUnavailableError, Sphalma
+from horasis.foundation.schemas import BoundingBox, Image, OcrResult, Result, Task, TextRegion
 
 
-class TesseractAdapter(Mechane):
-    """`Mechane` that reads text with Tesseract via ``pytesseract``.
+class TesseractAdapter(Backend):
+    """`Backend` that reads text with Tesseract via ``pytesseract``.
 
     Tesseract reports words together with their block/paragraph/line
-    numbers, which become ``Glyph.line_index`` directly. Tesseract only
+    numbers, which become ``TextRegion.line_index`` directly. Tesseract only
     gives rectangles, so each polygon is the box's four corners.
 
     Args:
@@ -27,7 +27,7 @@ class TesseractAdapter(Mechane):
         name: Registry name; defaults to ``"tesseract"``.
     """
 
-    supported_praxeis = frozenset({Praxis.OCR})
+    supported_tasks = frozenset({Task.OCR})
 
     def __init__(
         self,
@@ -55,17 +55,17 @@ class TesseractAdapter(Mechane):
         self._engine = pytesseract
         return pytesseract
 
-    def infer(self, praxis: Praxis, image: Physis, **options: Any) -> Theoria:
-        if not self.supports(praxis):
+    def infer(self, task: Task, image: Image, **options: Any) -> Result:
+        if not self.supports(task):
             raise BackendUnavailableError(
-                f"TesseractAdapter does not support praxis {praxis.value!r}"
+                f"TesseractAdapter does not support task {task.value!r}"
             )
         min_conf = float(options.get("min_confidence", self._min_confidence))
         start = time.perf_counter()
         try:
             engine = self._load_engine()
             data = engine.image_to_data(load_rgb(image), lang=self._lang, output_type="dict")
-            glyphs: list[Glyph] = []
+            regions: list[TextRegion] = []
             line_ids: dict[tuple[int, int, int], int] = {}
             for i, text in enumerate(data["text"]):
                 text = str(text).strip()
@@ -81,16 +81,16 @@ class TesseractAdapter(Mechane):
                     x_max=left + float(data["width"][i]),
                     y_max=top + float(data["height"][i]),
                 )
-                glyphs.append(
-                    Glyph(
+                regions.append(
+                    TextRegion(
                         text=text,
-                        confidence=doxa(conf / 100.0),
+                        confidence=to_confidence(conf / 100.0),
                         box=box,
                         polygon=box_to_polygon(box),
                         line_index=line,
                     )
                 )
-        except Sphalma:
+        except HorasisError:
             raise
         except Exception as exc:
             if type(exc).__name__ == "TesseractNotFoundError":
@@ -99,5 +99,5 @@ class TesseractAdapter(Mechane):
                 ) from exc
             raise AdapterError(f"Tesseract inference failed: {exc}") from exc
         return OcrResult(
-            backend=self.name, latency_ms=(time.perf_counter() - start) * 1000, glyphs=glyphs
+            backend=self.name, latency_ms=(time.perf_counter() - start) * 1000, regions=regions
         )

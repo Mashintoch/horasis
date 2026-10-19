@@ -5,18 +5,18 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image as PILImage
 
 from horasis.foundation import imaging
-from horasis.foundation.imaging import decode_image, encode_image, load_rgb, to_physis
-from horasis.foundation.kanon import InputPolicy
-from horasis.foundation.schemas import Physis
-from horasis.foundation.sphalma import ValidationError
+from horasis.foundation.config import InputPolicy
+from horasis.foundation.errors import ValidationError
+from horasis.foundation.imaging import decode_image, encode_image, load_rgb, to_image
+from horasis.foundation.schemas import Image
 from tests.conftest import png_bytes
 
 
 def _jpeg_with_orientation(orientation: int, size: tuple[int, int] = (8, 4)) -> bytes:
-    img = Image.new("RGB", size, (10, 20, 30))
+    img = PILImage.new("RGB", size, (10, 20, 30))
     exif = img.getexif()
     exif[0x0112] = orientation
     buf = io.BytesIO()
@@ -24,30 +24,30 @@ def _jpeg_with_orientation(orientation: int, size: tuple[int, int] = (8, 4)) -> 
     return buf.getvalue()
 
 
-def test_bytes_become_decoded_physis() -> None:
-    physis = to_physis(png_bytes(8, 6))
-    assert (physis.width, physis.height) == (8, 6)
-    assert load_rgb(physis).size == (8, 6)
+def test_bytes_become_decoded_image() -> None:
+    img = to_image(png_bytes(8, 6))
+    assert (img.width, img.height) == (8, 6)
+    assert load_rgb(img).size == (8, 6)
 
 
 def test_path_and_str_path(tmp_path: Path) -> None:
     f = tmp_path / "a.png"
     f.write_bytes(png_bytes())
-    assert to_physis(f).source == str(f)
-    assert to_physis(str(f)).width == 8
+    assert to_image(f).source == str(f)
+    assert to_image(str(f)).width == 8
 
 
 def test_missing_file_is_validation_error(tmp_path: Path) -> None:
     with pytest.raises(ValidationError, match="not found"):
-        to_physis(tmp_path / "nope.png")
+        to_image(tmp_path / "nope.png")
 
 
 def test_pil_and_numpy_inputs() -> None:
-    assert to_physis(Image.new("L", (5, 3))).width == 5
+    assert to_image(PILImage.new("L", (5, 3))).width == 5
     arr = np.zeros((3, 5, 3), dtype=np.uint8)
-    assert to_physis(arr).height == 3
-    assert Physis.from_array(arr).width == 5
-    assert Physis.from_pil(Image.new("RGB", (2, 2))).width == 2
+    assert to_image(arr).height == 3
+    assert Image.from_array(arr).width == 5
+    assert Image.from_pil(PILImage.new("RGB", (2, 2))).width == 2
 
 
 @pytest.mark.parametrize(
@@ -62,23 +62,23 @@ def test_pil_and_numpy_inputs() -> None:
     ],
 )
 def test_numpy_dtypes_and_layouts_are_accepted(arr: np.ndarray) -> None:
-    assert to_physis(arr).pixels.mode == "RGB"
+    assert to_image(arr).pixels.mode == "RGB"
 
 
 def test_float_array_in_unit_range_is_scaled() -> None:
-    px = np.asarray(to_physis(np.full((2, 2, 3), 1.0, dtype=np.float32)).pixels)
+    px = np.asarray(to_image(np.full((2, 2, 3), 1.0, dtype=np.float32)).pixels)
     assert px.max() == 255
 
 
 @pytest.mark.parametrize("shape", [(4,), (4, 4, 2), (2, 2, 2, 3)])
 def test_bad_array_shapes_rejected(shape: tuple[int, ...]) -> None:
     with pytest.raises(ValidationError):
-        to_physis(np.zeros(shape, dtype=np.uint8))
+        to_image(np.zeros(shape, dtype=np.uint8))
 
 
 def test_unsupported_type_rejected() -> None:
     with pytest.raises(ValidationError, match="Unsupported"):
-        to_physis(12345)
+        to_image(12345)
 
 
 def test_garbage_and_empty_bytes_rejected() -> None:
@@ -99,14 +99,14 @@ def test_size_limits() -> None:
     with pytest.raises(ValidationError, match="pixels"):
         decode_image(png_bytes(10, 10), InputPolicy(max_pixels=50))
     with pytest.raises(ValidationError, match="pixels"):
-        to_physis(np.zeros((10, 10, 3), dtype=np.uint8), InputPolicy(max_pixels=50))
+        to_image(np.zeros((10, 10, 3), dtype=np.uint8), InputPolicy(max_pixels=50))
 
 
 def test_file_size_checked_before_reading(tmp_path: Path) -> None:
     f = tmp_path / "big.png"
     f.write_bytes(png_bytes())
     with pytest.raises(ValidationError, match="limit"):
-        to_physis(f, InputPolicy(max_bytes=10))
+        to_image(f, InputPolicy(max_bytes=10))
 
 
 def test_format_allow_list() -> None:
@@ -136,19 +136,19 @@ def test_urls_are_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(imaging, "fetch_url", fake_fetch)
     with pytest.raises(ValidationError, match="disabled"):
-        to_physis("https://example.com/a.png")
+        to_image("https://example.com/a.png")
     assert calls == []  # nothing was fetched
 
-    physis = to_physis("https://example.com/a.png", InputPolicy(allow_urls=True))
+    img = to_image("https://example.com/a.png", InputPolicy(allow_urls=True))
     assert calls == ["https://example.com/a.png"]
-    assert physis.width == 8
+    assert img.width == 8
 
 
-def test_physis_from_source_and_from_path_reject_urls_by_default() -> None:
+def test_image_from_source_and_from_path_reject_urls_by_default() -> None:
     with pytest.raises(ValidationError):
-        Physis.from_source("https://example.com/a.png")
+        Image.from_source("https://example.com/a.png")
     with pytest.raises(ValidationError):
-        Physis.from_path("https://example.com/a.png")
+        Image.from_path("https://example.com/a.png")
 
 
 def test_fetch_url_rejects_non_http() -> None:
@@ -156,11 +156,11 @@ def test_fetch_url_rejects_non_http() -> None:
         imaging.fetch_url("file:///etc/passwd", timeout=1, max_bytes=10)
 
 
-def test_load_rgb_decodes_lazily_built_physis() -> None:
-    assert load_rgb(Physis.from_bytes(png_bytes(7, 5))).size == (7, 5)
+def test_load_rgb_decodes_lazily_built_image() -> None:
+    assert load_rgb(Image.from_bytes(png_bytes(7, 5))).size == (7, 5)
 
 
 def test_encode_image_roundtrip() -> None:
-    physis = to_physis(png_bytes(9, 3))
+    img = to_image(png_bytes(9, 3))
     for fmt in ("JPEG", "PNG"):
-        assert Image.open(io.BytesIO(encode_image(physis, fmt=fmt))).size == (9, 3)
+        assert PILImage.open(io.BytesIO(encode_image(img, fmt=fmt))).size == (9, 3)

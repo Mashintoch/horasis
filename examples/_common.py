@@ -5,14 +5,14 @@ from __future__ import annotations
 import sys
 from typing import Any
 
-from horasis import HashedApiKeyValidator, Klimax, Skopos
+from horasis import HashedApiKeyValidator, Tier, Client
 
 
-def demo_client(**build_kwargs: Any) -> tuple[Skopos, str]:
+def demo_client(**build_kwargs: Any) -> tuple[Client, str]:
     """A client with one freshly issued PRO-tier key. Returns ``(client, api_key)``."""
     validator = HashedApiKeyValidator()
-    key = validator.issue(principal_id="demo", tier=Klimax.PRO)
-    return Skopos.build(validator=validator, **build_kwargs), key
+    key = validator.issue(principal_id="demo", tier=Tier.PRO)
+    return Client.build(validator=validator, **build_kwargs), key
 
 
 def image_argument() -> str:

@@ -3,25 +3,25 @@ from __future__ import annotations
 import io
 
 import pytest
-from PIL import Image
+from PIL import Image as PILImage
 
+from horasis.access.guard import AccessContext
 from horasis.access.keys import InMemoryApiKeyValidator
-from horasis.access.klimax import Klimax
-from horasis.access.limen import AccessContext
-from horasis.backend.mechane import Mechane
-from horasis.backend.taxis import Taxis
-from horasis.foundation.kanon import Kanon, QuotaRule, TierRule
+from horasis.access.tiers import Tier
+from horasis.backend.base import Backend
+from horasis.backend.registry import BackendRegistry
+from horasis.foundation.config import Config, QuotaRule, TierRule
 from horasis.foundation.schemas import (
     ClassificationResult,
     DetectionResult,
     FaceResult,
+    Image,
     ModerationResult,
     OcrResult,
-    Physis,
-    Praxis,
-    Theoria,
+    Result,
+    Task,
 )
-from horasis.orchestration.organon import Organon
+from horasis.orchestration.pipeline import Pipeline
 
 
 @pytest.fixture(autouse=True)
@@ -36,7 +36,7 @@ def _isolated_model_cache(
 def png_bytes(width: int = 8, height: int = 6, color: tuple[int, int, int] = (200, 30, 30)) -> bytes:
     """A tiny but real PNG, for tests that go through input validation."""
     buf = io.BytesIO()
-    Image.new("RGB", (width, height), color).save(buf, format="PNG")
+    PILImage.new("RGB", (width, height), color).save(buf, format="PNG")
     return buf.getvalue()
 
 
@@ -50,42 +50,42 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(skip)
 
 
-class FakeMechane(Mechane):
-    """A deterministic, in-memory `Mechane` used across the test suite."""
+class FakeBackend(Backend):
+    """A deterministic, in-memory `Backend` used across the test suite."""
 
-    def __init__(self, name: str = "fake", praxeis: frozenset[Praxis] | None = None) -> None:
+    def __init__(self, name: str = "fake", tasks: frozenset[Task] | None = None) -> None:
         self.name = name
-        self.supported_praxeis = praxeis or frozenset(
-            {Praxis.DETECT, Praxis.CLASSIFY, Praxis.OCR, Praxis.FACE, Praxis.MODERATE}
+        self.supported_tasks = tasks or frozenset(
+            {Task.DETECT, Task.CLASSIFY, Task.OCR, Task.FACE, Task.MODERATE}
         )
-        self.calls: list[Praxis] = []
+        self.calls: list[Task] = []
 
-    def infer(self, praxis: Praxis, image: Physis, **options: object) -> Theoria:
-        self.calls.append(praxis)
+    def infer(self, task: Task, image: Image, **options: object) -> Result:
+        self.calls.append(task)
         result_cls = {
-            Praxis.DETECT: DetectionResult,
-            Praxis.CLASSIFY: ClassificationResult,
-            Praxis.OCR: OcrResult,
-            Praxis.FACE: FaceResult,
-            Praxis.MODERATE: ModerationResult,
-        }[praxis]
+            Task.DETECT: DetectionResult,
+            Task.CLASSIFY: ClassificationResult,
+            Task.OCR: OcrResult,
+            Task.FACE: FaceResult,
+            Task.MODERATE: ModerationResult,
+        }[task]
         return result_cls(backend=self.name, latency_ms=0.5)
 
 
 @pytest.fixture
-def kanon() -> Kanon:
-    return Kanon(
+def config() -> Config:
+    return Config(
         default_backend="fake",
         tiers={
             "free": TierRule(
                 name="free",
                 quota=QuotaRule(limit=2, window_seconds=3600),
-                allowed_praxeis=["detect", "classify"],
+                allowed_tasks=["detect", "classify"],
             ),
             "pro": TierRule(
                 name="pro",
                 quota=QuotaRule(limit=1000, window_seconds=3600),
-                allowed_praxeis=["detect", "classify", "ocr", "face", "moderate"],
+                allowed_tasks=["detect", "classify", "ocr", "face", "moderate"],
             ),
         },
     )
@@ -94,33 +94,33 @@ def kanon() -> Kanon:
 @pytest.fixture
 def validator() -> InMemoryApiKeyValidator:
     v = InMemoryApiKeyValidator()
-    v.register_simple("free-key", principal_id="free-user", tier=Klimax.FREE)
-    v.register_simple("pro-key", principal_id="pro-user", tier=Klimax.PRO)
+    v.register_simple("free-key", principal_id="free-user", tier=Tier.FREE)
+    v.register_simple("pro-key", principal_id="pro-user", tier=Tier.PRO)
     return v
 
 
 @pytest.fixture
-def fake_backend() -> FakeMechane:
-    return FakeMechane()
+def fake_backend() -> FakeBackend:
+    return FakeBackend()
 
 
 @pytest.fixture
-def taxis(fake_backend: FakeMechane) -> Taxis:
-    t = Taxis()
+def registry(fake_backend: FakeBackend) -> BackendRegistry:
+    t = BackendRegistry()
     t.register(fake_backend)
     return t
 
 
 @pytest.fixture
-def organon(kanon: Kanon, taxis: Taxis) -> Organon:
-    return Organon(kanon=kanon, taxis=taxis)
+def pipeline(config: Config, registry: BackendRegistry) -> Pipeline:
+    return Pipeline(config=config, registry=registry)
 
 
 @pytest.fixture
-def access(kanon: Kanon, validator: InMemoryApiKeyValidator) -> AccessContext:
-    return AccessContext.build(kanon=kanon, validator=validator)
+def access(config: Config, validator: InMemoryApiKeyValidator) -> AccessContext:
+    return AccessContext.build(config=config, validator=validator)
 
 
 @pytest.fixture
-def sample_image() -> Physis:
-    return Physis.from_bytes(png_bytes(), source="test-fixture")
+def sample_image() -> Image:
+    return Image.from_bytes(png_bytes(), source="test-fixture")

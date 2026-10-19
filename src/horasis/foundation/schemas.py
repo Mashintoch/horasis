@@ -14,12 +14,12 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing_extensions import Self
 
-from horasis.foundation.sphalma import Sphalma, ValidationError
+from horasis.foundation.errors import HorasisError, ValidationError
 
 logger = logging.getLogger(__name__)
 
 
-class Praxis(str, Enum):
+class Task(str, Enum):
     """The task an inference call performs."""
 
     DETECT = "detect"
@@ -31,7 +31,7 @@ class Praxis(str, Enum):
     POSE = "pose"
 
 
-class Doxa(BaseModel):
+class Confidence(BaseModel):
     """A confidence score in ``[0.0, 1.0]``."""
 
     model_config = ConfigDict(frozen=True)
@@ -42,10 +42,10 @@ class Doxa(BaseModel):
         return self.value
 
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
-        return f"Doxa({self.value:.4f})"
+        return f"Confidence({self.value:.4f})"
 
 
-class Physis(BaseModel):
+class Image(BaseModel):
     """Backend-agnostic representation of an input image.
 
     Build one with the ``from_*`` constructors, or let the public API do it
@@ -71,36 +71,36 @@ class Physis(BaseModel):
     height: int | None = None
 
     @classmethod
-    def from_path(cls, path: str | Path) -> Physis:
+    def from_path(cls, path: str | Path) -> Image:
         """Wrap a local file path. URLs are rejected; use `from_url` explicitly."""
         path_str = str(path)
         if urlparse(path_str).scheme in ("http", "https"):
             raise ValidationError(
-                f"{path_str!r} is a URL; use Physis.from_url() (network fetch is opt-in)"
+                f"{path_str!r} is a URL; use Image.from_url() (network fetch is opt-in)"
             )
         return cls(source=path_str, path=Path(path))
 
     @classmethod
-    def from_bytes(cls, data: bytes, *, source: str = "<bytes>") -> Physis:
+    def from_bytes(cls, data: bytes, *, source: str = "<bytes>") -> Image:
         return cls(source=source, data=data)
 
     @classmethod
-    def from_pil(cls, image: Any) -> Physis:
+    def from_pil(cls, image: Any) -> Image:
         """Wrap a ``PIL.Image.Image`` (decoded and EXIF-corrected immediately)."""
-        from horasis.foundation.imaging import to_physis
+        from horasis.foundation.imaging import to_image
 
-        return to_physis(image)
+        return to_image(image)
 
     @classmethod
-    def from_array(cls, array: Any) -> Physis:
+    def from_array(cls, array: Any) -> Image:
         """Wrap a numpy array in RGB order (see :func:`~horasis.foundation.imaging.array_to_image`)."""
-        from horasis.foundation.imaging import to_physis
+        from horasis.foundation.imaging import to_image
 
-        return to_physis(array)
+        return to_image(array)
 
     @classmethod
-    def from_url(cls, url: str, *, timeout: float = 30.0, max_bytes: int = 20 * 1024 * 1024) -> Physis:
-        """Fetch `url` and wrap the downloaded bytes as a `Physis`.
+    def from_url(cls, url: str, *, timeout: float = 30.0, max_bytes: int = 20 * 1024 * 1024) -> Image:
+        """Fetch `url` and wrap the downloaded bytes as a `Image`.
 
         Calling this directly *is* the opt-in to a network request.
 
@@ -112,13 +112,13 @@ class Physis(BaseModel):
         return cls(source=url, data=fetch_url(url, timeout=timeout, max_bytes=max_bytes))
 
     @classmethod
-    def from_source(cls, source: str, *, allow_urls: bool = False) -> Physis:
-        """Build a `Physis` from a local file path, or a URL if `allow_urls` is True."""
+    def from_source(cls, source: str, *, allow_urls: bool = False) -> Image:
+        """Build a `Image` from a local file path, or a URL if `allow_urls` is True."""
         if source.startswith(("http://", "https://")):
             if not allow_urls:
                 raise ValidationError(
                     "URL inputs are disabled; pass allow_urls=True (or set "
-                    "Kanon.inputs.allow_urls) to opt in."
+                    "Config.inputs.allow_urls) to opt in."
                 )
             return cls.from_url(source)
         return cls.from_path(source)
@@ -164,7 +164,7 @@ def _check_url_is_video(url: str, *, timeout: float) -> None:
     )
 
 
-class Kinesis(BaseModel):
+class Video(BaseModel):
     """Backend-agnostic representation of an input video."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
@@ -176,16 +176,16 @@ class Kinesis(BaseModel):
     fps: float | None = Field(default=None, description="Frames per second, if known.")
 
     @classmethod
-    def from_path(cls, path: str | Path) -> Kinesis:
+    def from_path(cls, path: str | Path) -> Video:
         p = Path(path)
         return cls(source=str(p), path=p)
 
     @classmethod
-    def from_bytes(cls, data: bytes, *, source: str = "<bytes>") -> Kinesis:
+    def from_bytes(cls, data: bytes, *, source: str = "<bytes>") -> Video:
         return cls(source=source, data=data)
 
     @classmethod
-    def from_url(cls, url: str, *, verify: bool = True, timeout: float = 10.0) -> Kinesis:
+    def from_url(cls, url: str, *, verify: bool = True, timeout: float = 10.0) -> Video:
         """Wrap a video URL for streaming by the backend (not downloaded here).
 
         Args:
@@ -212,8 +212,8 @@ class Kinesis(BaseModel):
         return cls(source=url, url=url)
 
     @classmethod
-    def from_source(cls, source: str) -> Kinesis:
-        """Build a `Kinesis` from a string that is either a URL or a local file path."""
+    def from_source(cls, source: str) -> Video:
+        """Build a `Video` from a string that is either a URL or a local file path."""
         if source.startswith(("http://", "https://")):
             return cls.from_url(source)
         return cls.from_path(source)
@@ -241,7 +241,7 @@ class BoundingBox(BaseModel):
 Point = tuple[float, float]
 
 
-class Glyph(BaseModel):
+class TextRegion(BaseModel):
     """A recognized unit of text produced by an OCR task.
 
     Attributes:
@@ -250,25 +250,25 @@ class Glyph(BaseModel):
         box: Axis-aligned bounding box.
         polygon: The tight outline as 4+ ``(x, y)`` points, when the engine
             provides one (rotated or skewed text).
-        line_index: Zero-based reading-order line this glyph belongs to.
+        line_index: Zero-based reading-order line this region belongs to.
         level: ``"word"`` for engine segments, ``"line"`` for merged lines.
     """
 
     model_config = ConfigDict(frozen=True)
 
     text: str
-    confidence: Doxa
+    confidence: Confidence
     box: BoundingBox | None = None
     polygon: list[Point] | None = None
     line_index: int | None = None
     level: Literal["word", "line"] = "word"
 
 
-class Theoria(BaseModel):
+class Result(BaseModel):
     """Base class for every result ("view") returned by the public API.
 
     Attributes:
-        praxis: The task type that produced this result.
+        task: The task type that produced this result.
         backend: Name of the backend adapter that produced the result.
         latency_ms: Wall-clock inference time in milliseconds.
         created_at: Unix timestamp when the result was constructed.
@@ -276,7 +276,7 @@ class Theoria(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    praxis: Praxis
+    task: Task
     backend: str
     latency_ms: float
     created_at: float = Field(default_factory=time.time)
@@ -350,7 +350,7 @@ class FaceEstimate(BaseModel):
 
     estimated_age: float | None = None
     estimated_gender: str | None = None
-    gender_confidence: Doxa | None = None
+    gender_confidence: Confidence | None = None
 
 
 class Detection(BaseModel):
@@ -359,15 +359,15 @@ class Detection(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     label: str
-    confidence: Doxa
+    confidence: Confidence
     box: BoundingBox
     face_estimate: FaceEstimate | None = None
 
 
-class DetectionResult(Theoria):
-    """Result of an object-detection :class:`Praxis`."""
+class DetectionResult(Result):
+    """Result of an object-detection :class:`Task`."""
 
-    praxis: Praxis = Praxis.DETECT
+    task: Task = Task.DETECT
     detections: list[Detection] = Field(default_factory=list)
     _items_field: ClassVar[str | None] = "detections"
 
@@ -426,8 +426,8 @@ class FrameDetections(BaseModel):
     detections: list[Detection] = Field(default_factory=list)
 
 
-class VideoDetectionResult(Theoria):
-    """Result of running object detection over a video (:class:`Kinesis` input).
+class VideoDetectionResult(Result):
+    """Result of running object detection over a video (:class:`Video` input).
 
     Frames are sampled and processed in order; `frames` holds one
     :class:`FrameDetections` per *processed* frame (see
@@ -435,7 +435,7 @@ class VideoDetectionResult(Theoria):
     necessarily one per frame in the source video.
     """
 
-    praxis: Praxis = Praxis.DETECT
+    task: Task = Task.DETECT
     frames: list[FrameDetections] = Field(default_factory=list)
     frame_count: int = 0
     fps: float | None = None
@@ -510,13 +510,13 @@ class ClassificationEntry(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     label: str
-    confidence: Doxa
+    confidence: Confidence
 
 
-class ClassificationResult(Theoria):
-    """Result of an image-classification :class:`Praxis`."""
+class ClassificationResult(Result):
+    """Result of an image-classification :class:`Task`."""
 
-    praxis: Praxis = Praxis.CLASSIFY
+    task: Task = Task.CLASSIFY
     entries: list[ClassificationEntry] = Field(default_factory=list)
     _items_field: ClassVar[str | None] = "entries"
 
@@ -527,26 +527,26 @@ class ClassificationResult(Theoria):
         return max(self.entries, key=lambda e: e.confidence.value)
 
 
-class OcrResult(Theoria):
-    """Result of an OCR / text-extraction :class:`Praxis`.
+class OcrResult(Result):
+    """Result of an OCR / text-extraction :class:`Task`.
 
-    ``glyphs`` are the engine's word-level segments in reading order. When
+    ``regions`` are the engine's word-level segments in reading order. When
     they carry a ``line_index``, :attr:`lines` merges them into line-level
-    glyphs and :attr:`text` separates lines with newlines.
+    regions and :attr:`text` separates lines with newlines.
     """
 
-    praxis: Praxis = Praxis.OCR
-    glyphs: list[Glyph] = Field(default_factory=list)
-    _items_field: ClassVar[str | None] = "glyphs"
+    task: Task = Task.OCR
+    regions: list[TextRegion] = Field(default_factory=list)
+    _items_field: ClassVar[str | None] = "regions"
 
     @property
-    def lines(self) -> list[Glyph]:
-        """Line-level glyphs (text joined left to right, mean confidence, union box)."""
-        grouped: dict[int, list[Glyph]] = {}
-        for g in self.glyphs:
+    def lines(self) -> list[TextRegion]:
+        """Line-level regions (text joined left to right, mean confidence, union box)."""
+        grouped: dict[int, list[TextRegion]] = {}
+        for g in self.regions:
             if g.line_index is not None:
                 grouped.setdefault(g.line_index, []).append(g)
-        out: list[Glyph] = []
+        out: list[TextRegion] = []
         for idx in sorted(grouped):
             words = grouped[idx]
             boxes = [w.box for w in words if w.box is not None]
@@ -562,9 +562,9 @@ class OcrResult(Theoria):
             )
             mean = sum(w.confidence.value for w in words) / len(words)
             out.append(
-                Glyph(
+                TextRegion(
                     text=" ".join(w.text for w in words),
-                    confidence=Doxa(value=mean),
+                    confidence=Confidence(value=mean),
                     box=union,
                     line_index=idx,
                     level="line",
@@ -575,9 +575,9 @@ class OcrResult(Theoria):
     @property
     def text(self) -> str:
         lines = self.lines
-        if lines and all(g.line_index is not None for g in self.glyphs):
+        if lines and all(g.line_index is not None for g in self.regions):
             return "\n".join(line.text for line in lines)
-        return " ".join(g.text for g in self.glyphs)
+        return " ".join(g.text for g in self.regions)
 
 
 class Face(Detection):
@@ -594,10 +594,10 @@ class Face(Detection):
     landmarks: dict[str, Point] | None = None
 
 
-class FaceResult(Theoria):
-    """Result of a face-detection :class:`Praxis`."""
+class FaceResult(Result):
+    """Result of a face-detection :class:`Task`."""
 
-    praxis: Praxis = Praxis.FACE
+    task: Task = Task.FACE
     faces: list[Face] = Field(default_factory=list)
     _items_field: ClassVar[str | None] = "faces"
 
@@ -629,14 +629,14 @@ class ModerationLabel(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     category: str
-    confidence: Doxa
+    confidence: Confidence
     flagged: bool
 
 
-class ModerationResult(Theoria):
-    """Result of a content-moderation :class:`Praxis`."""
+class ModerationResult(Result):
+    """Result of a content-moderation :class:`Task`."""
 
-    praxis: Praxis = Praxis.MODERATE
+    task: Task = Task.MODERATE
     labels: list[ModerationLabel] = Field(default_factory=list)
     _items_field: ClassVar[str | None] = "labels"
 
@@ -702,13 +702,13 @@ class BatchItem(Generic[T]):
         index: Position of the input in the submitted list.
         source: Short description of the input (path, ``"<bytes>"``, ...).
         result: The result, when the item succeeded.
-        error: The `Sphalma` that stopped this item (quota, validation, backend...).
+        error: The `HorasisError` that stopped this item (quota, validation, backend...).
     """
 
     index: int
     source: str
     result: T | None = None
-    error: Sphalma | None = None
+    error: HorasisError | None = None
 
     @property
     def ok(self) -> bool:
@@ -742,10 +742,10 @@ class Segment(Detection):
     polygon: list[Point] = Field(default_factory=list)
 
 
-class SegmentationResult(Theoria):
-    """Result of an instance-segmentation :class:`Praxis`."""
+class SegmentationResult(Result):
+    """Result of an instance-segmentation :class:`Task`."""
 
-    praxis: Praxis = Praxis.SEGMENT
+    task: Task = Task.SEGMENT
     segments: list[Segment] = Field(default_factory=list)
     _items_field: ClassVar[str | None] = "segments"
 
@@ -779,7 +779,7 @@ class Keypoint(BaseModel):
     name: str
     x: float
     y: float
-    confidence: Doxa
+    confidence: Confidence
 
 
 class Pose(Detection):
@@ -788,9 +788,9 @@ class Pose(Detection):
     keypoints: list[Keypoint] = Field(default_factory=list)
 
 
-class PoseResult(Theoria):
-    """Result of a pose-estimation :class:`Praxis`."""
+class PoseResult(Result):
+    """Result of a pose-estimation :class:`Task`."""
 
-    praxis: Praxis = Praxis.POSE
+    task: Task = Task.POSE
     poses: list[Pose] = Field(default_factory=list)
     _items_field: ClassVar[str | None] = "poses"

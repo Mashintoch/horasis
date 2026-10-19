@@ -16,63 +16,63 @@ from fastapi.testclient import TestClient
 
 from horasis import cli
 from horasis.access.keys import InMemoryApiKeyValidator
-from horasis.access.klimax import Klimax
-from horasis.api.skopos import Skopos
+from horasis.access.tiers import Tier
+from horasis.api.client import Client
+from horasis.backend.registry import BackendRegistry
 from horasis.backend.remote_adapter import RemoteAdapter
-from horasis.backend.taxis import Taxis
-from horasis.foundation.kanon import InputPolicy, Kanon, QuotaRule, RateRule, TierRule
-from horasis.foundation.schemas import (
-    BoundingBox,
-    Detection,
-    DetectionResult,
-    Doxa,
-    Glyph,
-    OcrResult,
-    Physis,
-    PoseResult,
-    Praxis,
-    SegmentationResult,
-    Theoria,
-)
-from horasis.foundation.sphalma import (
+from horasis.foundation.config import Config, InputPolicy, QuotaRule, RateRule, TierRule
+from horasis.foundation.errors import (
     AccessDeniedError,
     InvalidApiKeyError,
     RateLimitedError,
     ValidationError,
 )
+from horasis.foundation.schemas import (
+    BoundingBox,
+    Confidence,
+    Detection,
+    DetectionResult,
+    Image,
+    OcrResult,
+    PoseResult,
+    Result,
+    SegmentationResult,
+    Task,
+    TextRegion,
+)
 from horasis.server import create_app, parse_options
-from tests.conftest import FakeMechane, png_bytes
+from tests.conftest import FakeBackend, png_bytes
 
 
-class Scripted(FakeMechane):
+class Scripted(FakeBackend):
     """Returns recognisable results and records the options it received."""
 
-    def __init__(self, name: str = "fake", praxeis: frozenset[Praxis] | None = None) -> None:
-        super().__init__(name, praxeis or frozenset(Praxis))
+    def __init__(self, name: str = "fake", tasks: frozenset[Task] | None = None) -> None:
+        super().__init__(name, tasks or frozenset(Task))
         self.options: list[dict[str, Any]] = []
 
-    def infer(self, praxis: Praxis, image: Physis, **options: object) -> Theoria:
+    def infer(self, task: Task, image: Image, **options: object) -> Result:
         self.options.append(dict(options))
-        if praxis is Praxis.DETECT:
+        if task is Task.DETECT:
             det = Detection(
                 label="cat",
-                confidence=Doxa(value=0.9),
+                confidence=Confidence(value=0.9),
                 box=BoundingBox(x_min=1, y_min=2, x_max=30, y_max=40),
             )
             return DetectionResult(backend=self.name, latency_ms=1.0, detections=[det])
-        if praxis is Praxis.OCR:
-            glyph = Glyph(text="HELLO", confidence=Doxa(value=0.8), line_index=0)
-            return OcrResult(backend=self.name, latency_ms=1.0, glyphs=[glyph])
-        if praxis is Praxis.SEGMENT:
+        if task is Task.OCR:
+            region = TextRegion(text="HELLO", confidence=Confidence(value=0.8), line_index=0)
+            return OcrResult(backend=self.name, latency_ms=1.0, regions=[region])
+        if task is Task.SEGMENT:
             return SegmentationResult(backend=self.name, latency_ms=1.0)
-        if praxis is Praxis.POSE:
+        if task is Task.POSE:
             return PoseResult(backend=self.name, latency_ms=1.0)
-        return super().infer(praxis, image, **options)
+        return super().infer(task, image, **options)
 
 
-def make_client(**tier_kw: Any) -> tuple[Skopos, Scripted]:
+def make_client(**tier_kw: Any) -> tuple[Client, Scripted]:
     backend = Scripted()
-    kanon = Kanon(
+    config = Config(
         default_backend="fake",
         tiers={
             "pro": TierRule(name="pro", quota=QuotaRule(limit=100, window_seconds=3600), **tier_kw)
@@ -80,24 +80,24 @@ def make_client(**tier_kw: Any) -> tuple[Skopos, Scripted]:
         inputs=InputPolicy(max_bytes=5000),
     )
     validator = InMemoryApiKeyValidator()
-    validator.register_simple("good", principal_id="u", tier=Klimax.PRO)
-    validator.register_simple("scoped", principal_id="s", tier=Klimax.PRO, scopes=["ocr"])
-    validator.register_simple("old", principal_id="o", tier=Klimax.PRO, expires_at=1.0)
-    taxis = Taxis()
-    taxis.register(backend)
-    return Skopos(kanon=kanon, taxis=taxis, validator=validator), backend
+    validator.register_simple("good", principal_id="u", tier=Tier.PRO)
+    validator.register_simple("scoped", principal_id="s", tier=Tier.PRO, scopes=["ocr"])
+    validator.register_simple("old", principal_id="o", tier=Tier.PRO, expires_at=1.0)
+    registry = BackendRegistry()
+    registry.register(backend)
+    return Client(config=config, registry=registry, validator=validator), backend
 
 
 @pytest.fixture
-def served() -> tuple[TestClient, Scripted, Skopos]:
+def served() -> tuple[TestClient, Scripted, Client]:
     client, backend = make_client()
     return TestClient(create_app(client)), backend, client
 
 
-def post(http: TestClient, praxis: str, key: str | None = "good", **form: str) -> Any:
+def post(http: TestClient, task: str, key: str | None = "good", **form: str) -> Any:
     headers = {"X-API-Key": key} if key else {}
     return http.post(
-        f"/v1/{praxis}", files={"image": ("i.png", png_bytes(), "image/png")}, data=form, headers=headers
+        f"/v1/{task}", files={"image": ("i.png", png_bytes(), "image/png")}, data=form, headers=headers
     )
 
 
@@ -115,7 +115,7 @@ def test_detect_roundtrip_and_options_forwarding(served: Any) -> None:
     res = post(http, "detect", options=json.dumps({"conf": 0.4}))
     assert res.status_code == 200
     body = res.json()
-    assert body["praxis"] == "detect" and body["detections"][0]["label"] == "cat"
+    assert body["task"] == "detect" and body["detections"][0]["label"] == "cat"
     assert backend.options[-1] == {"estimate_demographics": False, "conf": 0.4}
 
 
@@ -133,8 +133,8 @@ def test_usage_endpoint(served: Any) -> None:
         ({"key": None}, 401, "invalid_api_key"),
         ({"key": "nope"}, 401, "invalid_api_key"),
         ({"key": "old"}, 401, "expired_api_key"),
-        ({"key": "scoped", "praxis": "detect"}, 403, "forbidden"),
-        ({"praxis": "teleport"}, 404, "unknown_praxis"),
+        ({"key": "scoped", "task": "detect"}, 403, "forbidden"),
+        ({"task": "teleport"}, 404, "unknown_task"),
         ({"options": "{bad json"}, 422, "invalid_request"),
         ({"options": json.dumps({"save": True})}, 422, "invalid_request"),
         ({"options": json.dumps({"conf": "high"})}, 422, "invalid_request"),
@@ -145,9 +145,9 @@ def test_usage_endpoint(served: Any) -> None:
 def test_error_mapping(served: Any, kwargs: dict[str, Any], status: int, kind: str) -> None:
     http, _, _ = served
     kw = dict(kwargs)
-    praxis = kw.pop("praxis", "detect")
+    task = kw.pop("task", "detect")
     key = kw.pop("key", "good")
-    res = post(http, praxis, key, **kw)
+    res = post(http, task, key, **kw)
     assert res.status_code == status
     assert res.json()["error"]["type"] == kind
 
@@ -175,14 +175,14 @@ def test_quota_and_rate_errors_carry_retry_after() -> None:
     assert int(limited.headers["Retry-After"]) >= 1
 
     tiny = make_client()[0]
-    tiny_kanon = tiny.kanon.model_copy(
+    tiny_config = tiny.config.model_copy(
         update={"tiers": {"pro": TierRule(name="pro", quota=QuotaRule(limit=1, window_seconds=60))}}
     )
     validator = InMemoryApiKeyValidator()
-    validator.register_simple("good", principal_id="u", tier=Klimax.PRO)
-    taxis = Taxis()
-    taxis.register(Scripted())
-    http2 = TestClient(create_app(Skopos(kanon=tiny_kanon, taxis=taxis, validator=validator)))
+    validator.register_simple("good", principal_id="u", tier=Tier.PRO)
+    registry = BackendRegistry()
+    registry.register(Scripted())
+    http2 = TestClient(create_app(Client(config=tiny_config, registry=registry, validator=validator)))
     post(http2, "detect")
     over = post(http2, "detect")
     body = over.json()["error"]
@@ -192,11 +192,11 @@ def test_quota_and_rate_errors_carry_retry_after() -> None:
 
 def test_backend_failure_does_not_leak_internals() -> None:
     class Crash(Scripted):
-        def infer(self, praxis: Praxis, image: Physis, **options: object) -> Theoria:
+        def infer(self, task: Task, image: Image, **options: object) -> Result:
             raise RuntimeError("secret path /srv/models")
 
     client, _ = make_client()
-    client.taxis.register(Crash("crash"))
+    client.registry.register(Crash("crash"))
     http = TestClient(create_app(client), raise_server_exceptions=False)
     res = post(http, "detect", backend="crash")
     assert res.status_code == 500
@@ -217,11 +217,11 @@ def test_remote_adapter_talks_to_the_server() -> None:
     server_client, backend = make_client()
     http = TestClient(create_app(server_client), base_url="http://horasis.test")
     remote = RemoteAdapter(endpoint_url="http://horasis.test", api_key="good", client=http)
-    result = remote.infer(Praxis.OCR, Physis.from_bytes(png_bytes()))
+    result = remote.infer(Task.OCR, Image.from_bytes(png_bytes()))
     assert isinstance(result, OcrResult) and result.text == "HELLO" and result.backend == "remote"
 
-    local_client = Skopos.build(
-        kanon=server_client.kanon.model_copy(update={"default_backend": "remote"}),
+    local_client = Client.build(
+        config=server_client.config.model_copy(update={"default_backend": "remote"}),
         validator=_validator("local"),
         backends=[remote],
     )
@@ -232,14 +232,14 @@ def test_remote_adapter_talks_to_the_server() -> None:
 
 def _validator(key: str) -> InMemoryApiKeyValidator:
     v = InMemoryApiKeyValidator()
-    v.register_simple(key, principal_id="l", tier=Klimax.PRO)
+    v.register_simple(key, principal_id="l", tier=Tier.PRO)
     return v
 
 
 def test_remote_adapter_maps_server_errors_back_to_exceptions() -> None:
     server_client, _ = make_client(rate=RateRule(per_minute=60, burst=1))
     http = TestClient(create_app(server_client), base_url="http://horasis.test")
-    img = Physis.from_bytes(png_bytes())
+    img = Image.from_bytes(png_bytes())
 
     def adapter(key: str) -> RemoteAdapter:
         return RemoteAdapter(
@@ -247,12 +247,12 @@ def test_remote_adapter_maps_server_errors_back_to_exceptions() -> None:
         )
 
     with pytest.raises(InvalidApiKeyError):
-        adapter("wrong").infer(Praxis.DETECT, img)
+        adapter("wrong").infer(Task.DETECT, img)
     with pytest.raises(AccessDeniedError):
-        adapter("scoped").infer(Praxis.DETECT, img)
-    adapter("good").infer(Praxis.DETECT, img)
+        adapter("scoped").infer(Task.DETECT, img)
+    adapter("good").infer(Task.DETECT, img)
     with pytest.raises(RateLimitedError) as info:
-        adapter("good").infer(Praxis.DETECT, img)
+        adapter("good").infer(Task.DETECT, img)
     assert info.value.limit == 60 and info.value.retry_after is not None
 
 
@@ -262,7 +262,7 @@ def test_remote_adapter_maps_server_errors_back_to_exceptions() -> None:
 @pytest.fixture
 def cli_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setattr(cli, "_default_backends", lambda args: [Scripted("fake")])
-    monkeypatch.setattr(cli.Prosthesis, "discover_entry_points", lambda self: [])
+    monkeypatch.setattr(cli.PluginLoader, "discover_entry_points", lambda self: [])
     image = tmp_path / "pic.png"
     image.write_bytes(png_bytes(64, 48))
     return image
@@ -313,7 +313,7 @@ def test_cli_backends_command(cli_env: Path, capsys: pytest.CaptureFixture[str])
     assert cli.main(["backends", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     names = {b["name"]: b for b in data["backends"]}
-    assert {"ultralytics", "fake"} <= set(names) and "detect" in names["ultralytics"]["praxeis"]
+    assert {"ultralytics", "fake"} <= set(names) and "detect" in names["ultralytics"]["tasks"]
 
 
 def test_cli_lists_plugins_including_broken_ones(
@@ -323,7 +323,7 @@ def test_cli_lists_plugins_including_broken_ones(
 
     good = EntryPoint("goodplug", "tests.unit.test_surfaces:PluginBackend", "horasis.backends")
     broken = EntryPoint("brokenplug", "no_such_module:Thing", "horasis.backends")
-    monkeypatch.setattr(cli.Prosthesis, "discover_entry_points", lambda self: [good, broken])
+    monkeypatch.setattr(cli.PluginLoader, "discover_entry_points", lambda self: [good, broken])
     assert cli.main(["backends", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     plug = next(b for b in data["backends"] if b["name"] == "plugged")
@@ -331,7 +331,7 @@ def test_cli_lists_plugins_including_broken_ones(
     assert data["failed_plugins"][0]["name"] == "brokenplug"
 
 
-class PluginBackend(FakeMechane):
+class PluginBackend(FakeBackend):
     def __init__(self) -> None:
         super().__init__("plugged")
 

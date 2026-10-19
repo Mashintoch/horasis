@@ -7,9 +7,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from horasis.access.metron import window_start
+from horasis.access.quota import window_start
 from horasis.access.ratelimit import RedisRateLimiter
-from horasis.foundation.sphalma import BackendUnavailableError
+from horasis.foundation.errors import BackendUnavailableError
 
 
 class SQLiteQuotaStore:
@@ -133,7 +133,7 @@ def redis_backends(
     """A quota store and a rate limiter sharing one Redis client (and connection pool).
 
     Usage: ``store, limiter = redis_backends(url=...)`` then
-    ``Skopos.build(quota_store=store, rate_limiter=limiter)``.
+    ``Client.build(quota_store=store, rate_limiter=limiter)``.
     """
     store = RedisQuotaStore(client, url=url)
     return store, RedisRateLimiter(store.client)

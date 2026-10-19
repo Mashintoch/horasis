@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from horasis import Skopos
+from horasis import Client
 from horasis.access.keys import InMemoryApiKeyValidator
-from horasis.access.klimax import Klimax
+from horasis.access.tiers import Tier
+from horasis.backend.registry import BackendRegistry
 from horasis.backend.remote_adapter import RemoteAdapter
-from horasis.backend.taxis import Taxis
 from horasis.backend.ultralytics_adapter import UltralyticsAdapter
-from horasis.foundation.kanon import Kanon
+from horasis.foundation.config import Config
 from horasis.foundation.schemas import DetectionResult
 
 from .common import KEY, assert_box_in_bounds, assert_confidence, image_size, sample_image, weights
@@ -21,7 +21,7 @@ pytest.importorskip("httpx", reason="needs horasis[remote]")
 
 def _validator(principal: str) -> InMemoryApiKeyValidator:
     validator = InMemoryApiKeyValidator()
-    validator.register_simple(KEY, principal_id=principal, tier=Klimax.ENTERPRISE)
+    validator.register_simple(KEY, principal_id=principal, tier=Tier.ENTERPRISE)
     return validator
 
 
@@ -30,18 +30,18 @@ def test_remote_detect_through_in_process_server_with_real_backend() -> None:
 
     from horasis.server import create_app
 
-    server_taxis = Taxis()
-    server_taxis.register(UltralyticsAdapter(detect_model=weights("yolo11n.pt")))
-    server = Skopos(kanon=Kanon.default(), taxis=server_taxis, validator=_validator("server"))
+    server_registry = BackendRegistry()
+    server_registry.register(UltralyticsAdapter(detect_model=weights("yolo11n.pt")))
+    server = Client(config=Config.default(), registry=server_registry, validator=_validator("server"))
     http = TestClient(create_app(server))
 
-    caller_taxis = Taxis()
-    caller_taxis.register(
+    caller_registry = BackendRegistry()
+    caller_registry.register(
         RemoteAdapter(endpoint_url="http://testserver", api_key=KEY, client=http, max_retries=0)
     )
-    caller = Skopos(
-        kanon=Kanon.default().model_copy(update={"default_backend": "remote"}),
-        taxis=caller_taxis,
+    caller = Client(
+        config=Config.default().model_copy(update={"default_backend": "remote"}),
+        registry=caller_registry,
         validator=_validator("caller"),
     )
 

@@ -7,8 +7,7 @@ import pytest
 httpx = pytest.importorskip("httpx")
 
 from horasis.backend.remote_adapter import RemoteAdapter, map_error_response
-from horasis.foundation.schemas import DetectionResult, Physis, Praxis
-from horasis.foundation.sphalma import (
+from horasis.foundation.errors import (
     AccessDeniedError,
     BackendUnavailableError,
     ExpiredApiKeyError,
@@ -18,11 +17,12 @@ from horasis.foundation.sphalma import (
     RevokedApiKeyError,
     ValidationError,
 )
+from horasis.foundation.schemas import DetectionResult, Image, Task
 from tests.conftest import png_bytes
 
-IMAGE = Physis.from_bytes(png_bytes())
+IMAGE = Image.from_bytes(png_bytes())
 OK_BODY = {
-    "praxis": "detect",
+    "task": "detect",
     "backend": "server-side",
     "latency_ms": 1.0,
     "detections": [
@@ -56,7 +56,7 @@ def test_success_sends_expected_request_and_parses_result() -> None:
         return httpx.Response(200, json=OK_BODY)
 
     adapter, _ = _adapter(handler)
-    result = adapter.infer(Praxis.DETECT, IMAGE, conf_threshold=0.3, weird=object())
+    result = adapter.infer(Task.DETECT, IMAGE, conf_threshold=0.3, weird=object())
     assert isinstance(result, DetectionResult)
     assert result.backend == "remote" and result.detections[0].label == "cat"
     (request,) = seen
@@ -76,7 +76,7 @@ def test_retries_503_with_backoff_then_succeeds() -> None:
         return httpx.Response(status, json=OK_BODY if status == 200 else {})
 
     adapter, sleeps = _adapter(handler, max_retries=2, backoff_base=1.0)
-    assert adapter.infer(Praxis.DETECT, IMAGE).backend == "remote"
+    assert adapter.infer(Task.DETECT, IMAGE).backend == "remote"
     assert len(sleeps) == 2
     assert 0 <= sleeps[0] <= 1.0 and 0 <= sleeps[1] <= 2.0  # full-jitter, doubling cap
 
@@ -90,7 +90,7 @@ def test_gives_up_after_max_retries_with_remote_error() -> None:
 
     adapter, sleeps = _adapter(handler, max_retries=2)
     with pytest.raises(RemoteError, match="busy") as info:
-        adapter.infer(Praxis.DETECT, IMAGE)
+        adapter.infer(Task.DETECT, IMAGE)
     assert len(calls) == 3 and len(sleeps) == 2
     assert info.value.status_code == 503 and info.value.retryable
 
@@ -105,7 +105,7 @@ def test_timeouts_and_connection_errors_are_retried() -> None:
         return httpx.Response(200, json=OK_BODY)
 
     adapter, sleeps = _adapter(handler, max_retries=2)
-    assert adapter.infer(Praxis.DETECT, IMAGE).praxis is Praxis.DETECT
+    assert adapter.infer(Task.DETECT, IMAGE).task is Task.DETECT
     assert len(sleeps) == 2
 
 
@@ -115,7 +115,7 @@ def test_persistent_timeout_becomes_retryable_remote_error() -> None:
 
     adapter, _ = _adapter(handler, max_retries=1)
     with pytest.raises(RemoteError) as info:
-        adapter.infer(Praxis.DETECT, IMAGE)
+        adapter.infer(Task.DETECT, IMAGE)
     assert info.value.status_code is None and info.value.retryable
 
 
@@ -141,7 +141,7 @@ def test_error_status_mapping_does_not_retry(status: int, error_type: str, expec
 
     adapter, sleeps = _adapter(handler, max_retries=3)
     with pytest.raises(expected, match="nope"):
-        adapter.infer(Praxis.DETECT, IMAGE)
+        adapter.infer(Task.DETECT, IMAGE)
     assert len(calls) == 1 and sleeps == []
 
 
@@ -155,7 +155,7 @@ def test_429_quota_is_mapped_and_not_retried_without_retry_after() -> None:
 
     adapter, sleeps = _adapter(handler)
     with pytest.raises(QuotaExceededError) as info:
-        adapter.infer(Praxis.DETECT, IMAGE)
+        adapter.infer(Task.DETECT, IMAGE)
     assert (info.value.limit, info.value.used, info.value.window_seconds) == (100, 100, 86400)
     assert sleeps == []
 
@@ -167,7 +167,7 @@ def test_429_with_short_retry_after_is_retried_and_honoured() -> None:
         return next(responses) or httpx.Response(200, json=OK_BODY)
 
     adapter, sleeps = _adapter(handler)
-    adapter.infer(Praxis.DETECT, IMAGE)
+    adapter.infer(Task.DETECT, IMAGE)
     assert sleeps == [2.0]
 
 
@@ -177,25 +177,25 @@ def test_429_with_huge_retry_after_fails_fast_with_hint() -> None:
 
     adapter, sleeps = _adapter(handler)
     with pytest.raises(QuotaExceededError) as info:
-        adapter.infer(Praxis.DETECT, IMAGE)
+        adapter.infer(Task.DETECT, IMAGE)
     assert info.value.context["retry_after"] == 3600.0 and sleeps == []
 
 
 def test_bad_success_bodies_are_remote_errors() -> None:
     adapter, _ = _adapter(lambda r: httpx.Response(200, text="<html>"))
     with pytest.raises(RemoteError, match="non-object"):
-        adapter.infer(Praxis.DETECT, IMAGE)
+        adapter.infer(Task.DETECT, IMAGE)
     adapter, _ = _adapter(lambda r: httpx.Response(200, json={"detections": "not-a-list"}))
     with pytest.raises(RemoteError, match="invalid detect result"):
-        adapter.infer(Praxis.DETECT, IMAGE)
+        adapter.infer(Task.DETECT, IMAGE)
 
 
-def test_unsupported_praxis_and_defaults() -> None:
-    adapter, _ = _adapter(lambda r: httpx.Response(200), praxeis=[Praxis.OCR])
-    assert adapter.supports(Praxis.OCR) and not adapter.supports(Praxis.DETECT)
+def test_unsupported_task_and_defaults() -> None:
+    adapter, _ = _adapter(lambda r: httpx.Response(200), tasks=[Task.OCR])
+    assert adapter.supports(Task.OCR) and not adapter.supports(Task.DETECT)
     with pytest.raises(BackendUnavailableError):
-        adapter.infer(Praxis.DETECT, IMAGE)
-    assert RemoteAdapter(endpoint_url="http://x").supported_praxeis == frozenset(Praxis)
+        adapter.infer(Task.DETECT, IMAGE)
+    assert RemoteAdapter(endpoint_url="http://x").supported_tasks == frozenset(Task)
 
 
 def test_map_error_response_handles_unparseable_body() -> None:

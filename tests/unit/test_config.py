@@ -3,24 +3,24 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from horasis.foundation.kanon import Kanon, QuotaRule, TierRule
-from horasis.foundation.sphalma import ConfigurationError
+from horasis.foundation.config import Config, QuotaRule, TierRule
+from horasis.foundation.errors import ConfigurationError
 
 
-def test_default_kanon_has_three_tiers() -> None:
-    kanon = Kanon.default()
-    assert set(kanon.tiers) == {"free", "pro", "enterprise"}
-    assert kanon.tier("pro").quota.limit == 10_000
+def test_default_config_has_three_tiers() -> None:
+    config = Config.default()
+    assert set(config.tiers) == {"free", "pro", "enterprise"}
+    assert config.tier("pro").quota.limit == 10_000
 
 
 def test_tier_lookup_raises_for_unknown_tier() -> None:
-    kanon = Kanon.default()
+    config = Config.default()
     with pytest.raises(ConfigurationError):
-        kanon.tier("nonexistent")
+        config.tier("nonexistent")
 
 
-def test_from_dict_builds_kanon() -> None:
-    kanon = Kanon.from_dict(
+def test_from_dict_builds_config() -> None:
+    config = Config.from_dict(
         {
             "default_backend": "ultralytics",
             "tiers": {
@@ -31,18 +31,18 @@ def test_from_dict_builds_kanon() -> None:
             },
         }
     )
-    assert kanon.default_backend == "ultralytics"
-    assert kanon.tier("free").quota.limit == 5
+    assert config.default_backend == "ultralytics"
+    assert config.tier("free").quota.limit == 5
 
 
 def test_from_dict_raises_configuration_error_on_bad_input() -> None:
     with pytest.raises(ConfigurationError):
-        Kanon.from_dict({"tiers": {"free": {"name": "free", "quota": {"limit": -1}}}})
+        Config.from_dict({"tiers": {"free": {"name": "free", "quota": {"limit": -1}}}})
 
 
 def test_from_yaml_missing_file_raises() -> None:
     with pytest.raises(ConfigurationError):
-        Kanon.from_yaml("/nonexistent/path/kanon.yaml")
+        Config.from_yaml("/nonexistent/path/config.yaml")
 
 
 def test_from_yaml_loads_shipped_default_config() -> None:
@@ -51,15 +51,15 @@ def test_from_yaml_loads_shipped_default_config() -> None:
     config_path = (
         Path(__file__).resolve().parents[2] / "src" / "horasis" / "config" / "default.yaml"
     )
-    kanon = Kanon.from_yaml(config_path)
-    assert kanon.default_backend == "ultralytics"
-    assert "free" in kanon.tiers
+    config = Config.from_yaml(config_path)
+    assert config.default_backend == "ultralytics"
+    assert "free" in config.tiers
 
 
-def test_kanon_is_immutable() -> None:
-    kanon = Kanon.default()
+def test_config_is_immutable() -> None:
+    config = Config.default()
     with pytest.raises(ValidationError):
-        kanon.default_backend = "onnx"  # type: ignore[misc]
+        config.default_backend = "onnx"  # type: ignore[misc]
 
 
 def test_quota_rule_requires_positive_values() -> None:
@@ -69,29 +69,29 @@ def test_quota_rule_requires_positive_values() -> None:
         QuotaRule(limit=10, window_seconds=0)
 
 
-def test_tier_rule_default_allowed_praxeis() -> None:
+def test_tier_rule_default_allowed_tasks() -> None:
     rule = TierRule(name="x", quota=QuotaRule(limit=1, window_seconds=1))
-    assert "detect" in rule.allowed_praxeis
-    assert "moderate" in rule.allowed_praxeis
+    assert "detect" in rule.allowed_tasks
+    assert "moderate" in rule.allowed_tasks
 
 
 def test_shipped_default_yaml_loads_with_safe_input_defaults() -> None:
     from importlib.resources import files
 
     path = files("horasis") / "config" / "default.yaml"
-    kanon = Kanon.from_yaml(str(path))
-    assert kanon.inputs.allow_urls is False
-    assert set(kanon.tiers) == {"free", "pro", "enterprise"}
+    config = Config.from_yaml(str(path))
+    assert config.inputs.allow_urls is False
+    assert set(config.tiers) == {"free", "pro", "enterprise"}
 
 
 def test_moderation_threshold_per_category_override() -> None:
-    kanon = Kanon(moderation_threshold=0.4, moderation_thresholds={"nsfw": 0.9})
-    assert kanon.moderation_threshold_for("nsfw") == 0.9
-    assert kanon.moderation_threshold_for("violence") == 0.4
+    config = Config(moderation_threshold=0.4, moderation_thresholds={"nsfw": 0.9})
+    assert config.moderation_threshold_for("nsfw") == 0.9
+    assert config.moderation_threshold_for("violence") == 0.4
 
 
 def test_input_policy_rejects_nonsense_limits() -> None:
-    from horasis.foundation.kanon import InputPolicy
+    from horasis.foundation.config import InputPolicy
 
     with pytest.raises(ValidationError):
         InputPolicy(max_bytes=0)

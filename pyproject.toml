@@ -139,7 +139,7 @@ ignore-paths = ["^tests/.*$", "^examples/.*$"]
 fail-under = 9.0
 
 [tool.pylint.typecheck]
-signature-mutators = ["horasis.access.limen.limen"]
+signature-mutators = ["horasis.access.guard.requires_access"]
 # cv2 builds its API at import time, so pylint cannot see its members.
 generated-members = ["cv2.*"]
 

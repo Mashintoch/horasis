@@ -7,27 +7,27 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from horasis.backend._common import doxa
-from horasis.backend.mechane import Mechane
+from horasis.backend._common import to_confidence
+from horasis.backend.base import Backend
+from horasis.foundation.errors import AdapterError, BackendUnavailableError, HorasisError
 from horasis.foundation.imaging import load_rgb
-from horasis.foundation.schemas import ModerationLabel, ModerationResult, Physis, Praxis, Theoria
-from horasis.foundation.sphalma import AdapterError, BackendUnavailableError, Sphalma
+from horasis.foundation.schemas import Image, ModerationLabel, ModerationResult, Result, Task
 
 DEFAULT_MODEL = "Falconsai/nsfw_image_detection"
 DEFAULT_SAFE_CATEGORIES = frozenset({"normal", "safe", "sfw", "neutral", "drawings"})
 
 
-class TransformersModerationAdapter(Mechane):
-    """`Mechane` that scores an image against safety categories.
+class TransformersModerationAdapter(Backend):
+    """`Backend` that scores an image against safety categories.
 
     Wraps a Hugging Face ``image-classification`` pipeline; every label the
     model emits becomes a category with its score.
 
-    ``flagged`` is decided by thresholds. The :class:`~horasis.orchestration.organon.Organon`
-    re-applies the thresholds from :class:`~horasis.foundation.kanon.Kanon`
-    to every moderation result, so Kanon is the single source of truth when
-    used through ``Skopos``. When used standalone, pass `threshold_for`
-    (e.g. ``kanon.moderation_threshold_for``); the default is 0.5.
+    ``flagged`` is decided by thresholds. The :class:`~horasis.orchestration.pipeline.Pipeline`
+    re-applies the thresholds from :class:`~horasis.foundation.config.Config`
+    to every moderation result, so Config is the single source of truth when
+    used through ``Client``. When used standalone, pass `threshold_for`
+    (e.g. ``config.moderation_threshold_for``); the default is 0.5.
 
     Args:
         model: Hugging Face model id or local path. Weights are downloaded
@@ -40,7 +40,7 @@ class TransformersModerationAdapter(Mechane):
         name: Registry name; defaults to ``"moderation"``.
     """
 
-    supported_praxeis = frozenset({Praxis.MODERATE})
+    supported_tasks = frozenset({Task.MODERATE})
 
     def __init__(
         self,
@@ -86,10 +86,10 @@ class TransformersModerationAdapter(Mechane):
     def warm_up(self) -> None:
         self._load_classifier()
 
-    def infer(self, praxis: Praxis, image: Physis, **options: Any) -> Theoria:
-        if not self.supports(praxis):
+    def infer(self, task: Task, image: Image, **options: Any) -> Result:
+        if not self.supports(task):
             raise BackendUnavailableError(
-                f"TransformersModerationAdapter does not support praxis {praxis.value!r}"
+                f"TransformersModerationAdapter does not support task {task.value!r}"
             )
         start = time.perf_counter()
         try:
@@ -98,12 +98,12 @@ class TransformersModerationAdapter(Mechane):
             labels = [
                 ModerationLabel(
                     category=str(item["label"]),
-                    confidence=doxa(item["score"]),
+                    confidence=to_confidence(item["score"]),
                     flagged=self._is_flagged(str(item["label"]), float(item["score"])),
                 )
                 for item in raw
             ]
-        except Sphalma:
+        except HorasisError:
             raise
         except Exception as exc:
             raise AdapterError(f"Moderation inference failed: {exc}") from exc

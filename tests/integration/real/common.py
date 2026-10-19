@@ -6,21 +6,21 @@ from pathlib import Path
 
 import pytest
 
-from horasis import Skopos, models
+from horasis import Client, models
 from horasis.access.keys import InMemoryApiKeyValidator
-from horasis.access.klimax import Klimax
-from horasis.backend.mechane import Mechane
-from horasis.foundation.imaging import to_physis
-from horasis.foundation.schemas import BoundingBox, Doxa
+from horasis.access.tiers import Tier
+from horasis.backend.base import Backend
+from horasis.foundation.imaging import to_image
+from horasis.foundation.schemas import BoundingBox, Confidence
 
 KEY = "integration-key"
 
 
-def make_client(*backends: Mechane) -> Skopos:
-    """A `Skopos` with the real Ultralytics adapter plus `backends` and one enterprise key."""
+def make_client(*backends: Backend) -> Client:
+    """A `Client` with the real Ultralytics adapter plus `backends` and one enterprise key."""
     validator = InMemoryApiKeyValidator()
-    validator.register_simple(KEY, principal_id="integration", tier=Klimax.ENTERPRISE)
-    return Skopos.build(validator=validator, backends=list(backends))
+    validator.register_simple(KEY, principal_id="integration", tier=Tier.ENTERPRISE)
+    return Client.build(validator=validator, backends=list(backends))
 
 
 def weights(name: str) -> str:
@@ -42,11 +42,11 @@ def sample_image(name: str) -> Path:
 
 
 def image_size(path: Path) -> tuple[int, int]:
-    physis = to_physis(path)
-    return physis.width, physis.height
+    img = to_image(path)
+    return img.width, img.height
 
 
-def assert_confidence(value: Doxa) -> None:
+def assert_confidence(value: Confidence) -> None:
     assert 0.0 <= value.value <= 1.0
 
 

@@ -6,8 +6,8 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from horasis.foundation.kanon import QuotaRule
-from horasis.foundation.sphalma import QuotaExceededError
+from horasis.foundation.config import QuotaRule
+from horasis.foundation.errors import QuotaExceededError
 
 
 def window_start(window_seconds: int, now: float | None = None) -> int:
@@ -23,7 +23,7 @@ def seconds_until_reset(window_seconds: int, now: float | None = None) -> float:
 
 
 class QuotaStore(Protocol):
-    """Pluggable counter backend for :class:`Metron`.
+    """Pluggable counter backend for :class:`QuotaManager`.
 
     Implementations must make ``increment_and_get`` atomic: concurrent
     callers (threads or processes) each see a distinct, consecutive count.
@@ -73,7 +73,7 @@ class WindowUsage(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    scope: str = Field(description='"quota" for the overall limit or "praxis:<name>".')
+    scope: str = Field(description='"quota" for the overall limit or "task:<name>".')
     window_seconds: int
     limit: int
     used: int
@@ -82,13 +82,13 @@ class WindowUsage(BaseModel):
 
 
 class UsageReport(BaseModel):
-    """What a caller has used and has left, in quota units (see ``Kanon.praxis_cost``).
+    """What a caller has used and has left, in quota units (see ``Config.task_cost``).
 
     Attributes:
         principal_id: Who the report is for.
         tier: Their tier name.
         overall: Usage against the tier's main quota window.
-        per_praxis: Usage per praxis (each praxis's own quota window if the
+        per_task: Usage per task (each task's own quota window if the
             tier defines one, otherwise the tier window with the overall limit).
     """
 
@@ -97,10 +97,10 @@ class UsageReport(BaseModel):
     principal_id: str
     tier: str
     overall: WindowUsage
-    per_praxis: dict[str, WindowUsage]
+    per_task: dict[str, WindowUsage]
 
 
-class Metron:
+class QuotaManager:
     """Enforces :class:`QuotaRule` limits per principal, weighted by call cost."""
 
     def __init__(self, store: QuotaStore | None = None) -> None:

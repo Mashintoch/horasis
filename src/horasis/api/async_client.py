@@ -1,8 +1,8 @@
-"""AsyncSkopos -- the asyncio face of the client.
+"""AsyncClient -- the asyncio face of the client.
 
 Backends are blocking (model inference, HTTP), so every call is run on a
 thread pool and awaited; the event loop is never blocked. Access control,
-quotas and hooks behave exactly as in the synchronous :class:`Skopos`, which
+quotas and hooks behave exactly as in the synchronous :class:`Client`, which
 this class wraps.
 """
 
@@ -18,8 +18,9 @@ from typing import Any, TypeVar
 
 from typing_extensions import Self
 
-from horasis.access.metron import UsageReport
-from horasis.api.skopos import Skopos, _describe
+from horasis.access.quota import UsageReport
+from horasis.api.client import Client, _describe
+from horasis.foundation.errors import HorasisError, InvalidApiKeyError
 from horasis.foundation.imaging import ImageInput
 from horasis.foundation.schemas import (
     BatchItem,
@@ -32,7 +33,6 @@ from horasis.foundation.schemas import (
     PoseResult,
     SegmentationResult,
 )
-from horasis.foundation.sphalma import InvalidApiKeyError, Sphalma
 
 R = TypeVar("R")
 _DONE = object()
@@ -64,7 +64,7 @@ class _AsyncBase:
                 )
             except InvalidApiKeyError:
                 raise
-            except Sphalma as exc:
+            except HorasisError as exc:
                 return BatchItem(index, _describe(image), error=exc)
 
         return list(await asyncio.gather(*(one(i, img) for i, img in enumerate(images))))
@@ -242,8 +242,8 @@ class AsyncPoseEstimator(_AsyncBase):
         return await self._batch(self._sync.estimate, images, api_key, backend=backend)
 
 
-class AsyncSkopos:
-    """Async client mirroring :class:`Skopos` (``await client.detection.detect(...)``).
+class AsyncClient:
+    """Async client mirroring :class:`Client` (``await client.detection.detect(...)``).
 
     Args:
         client: The synchronous client to wrap.
@@ -252,11 +252,11 @@ class AsyncSkopos:
 
     Use as an async context manager (or call :meth:`close`) to shut the pool down::
 
-        async with AsyncSkopos.build(validator=validator) as client:
+        async with AsyncClient.build(validator=validator) as client:
             result = await client.detection.detect("photo.jpg", api_key=key)
     """
 
-    def __init__(self, client: Skopos, *, max_workers: int | None = None) -> None:
+    def __init__(self, client: Client, *, max_workers: int | None = None) -> None:
         self._client = client
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="horasis")
         self.detection = AsyncObjectDetector(client.detection, self._executor)
@@ -268,13 +268,13 @@ class AsyncSkopos:
         self.pose = AsyncPoseEstimator(client.pose, self._executor)
 
     @classmethod
-    def build(cls, *, max_workers: int | None = None, **build_kwargs: Any) -> AsyncSkopos:
-        """Like :meth:`Skopos.build`; extra keyword arguments are forwarded to it."""
-        return cls(Skopos.build(**build_kwargs), max_workers=max_workers)
+    def build(cls, *, max_workers: int | None = None, **build_kwargs: Any) -> AsyncClient:
+        """Like :meth:`Client.build`; extra keyword arguments are forwarded to it."""
+        return cls(Client.build(**build_kwargs), max_workers=max_workers)
 
     @property
-    def sync(self) -> Skopos:
-        """The wrapped synchronous client (hooks, taxis, kanon...)."""
+    def sync(self) -> Client:
+        """The wrapped synchronous client (hooks, registry, config...)."""
         return self._client
 
     async def usage(self, api_key: str) -> UsageReport:
@@ -284,7 +284,7 @@ class AsyncSkopos:
         return report
 
     async def warmup(self, backends: Sequence[str] | None = None) -> list[str]:
-        """Async :meth:`Skopos.warmup` -- load models without blocking the loop."""
+        """Async :meth:`Client.warmup` -- load models without blocking the loop."""
         warmed: list[str] = await asyncio.get_running_loop().run_in_executor(
             self._executor, self._client.warmup, backends
         )

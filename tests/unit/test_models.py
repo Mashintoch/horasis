@@ -9,12 +9,12 @@ import pytest
 
 from horasis import cli, models
 from horasis.backend.face_adapter import MODEL_ENV_VAR, YuNetFaceAdapter
-from horasis.foundation.schemas import Praxis
-from horasis.foundation.sphalma import (
+from horasis.foundation.errors import (
     BackendUnavailableError,
     ConfigurationError,
     ModelDownloadError,
 )
+from horasis.foundation.schemas import Task
 
 PAYLOAD = b"fake-onnx-bytes" * 1000
 
@@ -136,15 +136,15 @@ def test_adapter_auto_download_only_when_enabled(
     assert opener.urls == [fake_spec.url]
 
 
-def test_kanon_flag_reaches_backends() -> None:
-    from horasis import Skopos
-    from horasis.foundation.kanon import Kanon
+def test_config_flag_reaches_backends() -> None:
+    from horasis import Client
+    from horasis.foundation.config import Config
 
     adapter = YuNetFaceAdapter()
-    client = Skopos.build(kanon=Kanon.default().model_copy(update={"auto_download_models": True}))
-    client.taxis.register(adapter)
+    client = Client.build(config=Config.default().model_copy(update={"auto_download_models": True}))
+    client.registry.register(adapter)
     assert adapter.default_auto_download is True
-    assert Praxis.FACE in adapter.supported_praxeis
+    assert Task.FACE in adapter.supported_tasks
 
 
 def test_models_cli(

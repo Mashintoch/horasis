@@ -2,9 +2,9 @@
 
 Wire protocol (served by ``horasis.server``):
 
-* ``POST {endpoint}/v1/{praxis}`` -- multipart form with an ``image`` file and
+* ``POST {endpoint}/v1/{task}`` -- multipart form with an ``image`` file and
   an optional JSON ``options`` field; credential in the ``X-API-Key`` header.
-* ``200`` -> JSON body in the shape of the matching ``Theoria`` result.
+* ``200`` -> JSON body in the shape of the matching ``Result`` result.
 * Errors -> ``{"error": {"type": "...", "message": "..."}}`` with a status code.
 """
 
@@ -16,47 +16,47 @@ import time
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from horasis.backend.mechane import Mechane
-from horasis.foundation.imaging import encode_image
-from horasis.foundation.schemas import (
-    ClassificationResult,
-    DetectionResult,
-    FaceResult,
-    ModerationResult,
-    OcrResult,
-    Physis,
-    PoseResult,
-    Praxis,
-    SegmentationResult,
-    Theoria,
-)
-from horasis.foundation.sphalma import (
+from horasis.backend.base import Backend
+from horasis.foundation.errors import (
     AccessDeniedError,
     BackendUnavailableError,
     ExpiredApiKeyError,
+    HorasisError,
     InvalidApiKeyError,
     QuotaExceededError,
     RateLimitedError,
     RemoteError,
     RevokedApiKeyError,
-    Sphalma,
     ValidationError,
 )
+from horasis.foundation.imaging import encode_image
+from horasis.foundation.schemas import (
+    ClassificationResult,
+    DetectionResult,
+    FaceResult,
+    Image,
+    ModerationResult,
+    OcrResult,
+    PoseResult,
+    Result,
+    SegmentationResult,
+    Task,
+)
 
-_RESULT_TYPES: dict[Praxis, type[Theoria]] = {
-    Praxis.DETECT: DetectionResult,
-    Praxis.CLASSIFY: ClassificationResult,
-    Praxis.OCR: OcrResult,
-    Praxis.FACE: FaceResult,
-    Praxis.MODERATE: ModerationResult,
-    Praxis.SEGMENT: SegmentationResult,
-    Praxis.POSE: PoseResult,
+_RESULT_TYPES: dict[Task, type[Result]] = {
+    Task.DETECT: DetectionResult,
+    Task.CLASSIFY: ClassificationResult,
+    Task.OCR: OcrResult,
+    Task.FACE: FaceResult,
+    Task.MODERATE: ModerationResult,
+    Task.SEGMENT: SegmentationResult,
+    Task.POSE: PoseResult,
 }
 _RETRYABLE_STATUS = frozenset({502, 503, 504})
 
 
-def map_error_response(status: int, body: Any, headers: Any = None) -> Sphalma:
-    """Translate a failed HTTP response into the matching `Sphalma` exception."""
+def map_error_response(status: int, body: Any, headers: Any = None) -> HorasisError:
+    """Translate a failed HTTP response into the matching `HorasisError` exception."""
     error = body.get("error") if isinstance(body, dict) else None
     error = error if isinstance(error, dict) else {}
     kind = str(error.get("type", ""))
@@ -111,12 +111,12 @@ def _retry_after(headers: Any) -> float | None:
         return None
 
 
-class RemoteAdapter(Mechane):
-    """`Mechane` that delegates inference to a remote horasis server.
+class RemoteAdapter(Backend):
+    """`Backend` that delegates inference to a remote horasis server.
 
     Transient failures (timeouts, connection errors, HTTP 502/503/504, and
     429 with a short ``Retry-After``) are retried with exponential backoff
-    and jitter. Everything else fails fast, mapped onto `Sphalma` types:
+    and jitter. Everything else fails fast, mapped onto `HorasisError` types:
     401 -> ``InvalidApiKeyError`` (or Expired/Revoked), 403 ->
     ``AccessDeniedError``, 429 -> ``QuotaExceededError``, 400/413/415/422 ->
     ``ValidationError``, 404/501 -> ``BackendUnavailableError``, and
@@ -130,7 +130,7 @@ class RemoteAdapter(Mechane):
         backoff_base: First backoff delay in seconds (doubles each retry).
         backoff_max: Upper bound for any single delay, and for honouring
             ``Retry-After``.
-        praxeis: Praxeis to expose; defaults to all of them.
+        tasks: Tasks to expose; defaults to all of them.
         image_format: ``"JPEG"`` (smaller) or ``"PNG"`` (lossless) upload encoding.
         client: A pre-built ``httpx.Client`` (e.g. with a mock transport).
         sleep: Delay function; injectable so tests need not wait.
@@ -146,14 +146,14 @@ class RemoteAdapter(Mechane):
         max_retries: int = 2,
         backoff_base: float = 0.5,
         backoff_max: float = 8.0,
-        praxeis: Iterable[Praxis] | None = None,
+        tasks: Iterable[Task] | None = None,
         image_format: str = "JPEG",
         client: Any = None,
         sleep: Callable[[float], None] = time.sleep,
         name: str = "remote",
     ) -> None:
         self.name = name
-        self.supported_praxeis = frozenset(praxeis) if praxeis is not None else frozenset(Praxis)
+        self.supported_tasks = frozenset(tasks) if tasks is not None else frozenset(Task)
         self._endpoint_url = endpoint_url.rstrip("/")
         self._api_key = api_key
         self._timeout = timeout
@@ -184,18 +184,18 @@ class RemoteAdapter(Mechane):
             return min(retry_after, self._backoff_max)
         return random.uniform(0, min(self._backoff_max, self._backoff_base * 2**attempt))
 
-    def infer(self, praxis: Praxis, image: Physis, **options: Any) -> Theoria:
-        if not self.supports(praxis):
-            raise BackendUnavailableError(f"RemoteAdapter does not support praxis {praxis.value!r}")
+    def infer(self, task: Task, image: Image, **options: Any) -> Result:
+        if not self.supports(task):
+            raise BackendUnavailableError(f"RemoteAdapter does not support task {task.value!r}")
         client = self._load_client()
         upload = encode_image(image, fmt=self._image_format)
         mime = "image/png" if self._image_format.upper() == "PNG" else "image/jpeg"
-        url = f"{self._endpoint_url}/v1/{praxis.value}"
+        url = f"{self._endpoint_url}/v1/{task.value}"
         headers = {"X-API-Key": self._api_key} if self._api_key else {}
         form = {"options": json.dumps(_json_safe(options))}
 
         start = time.perf_counter()
-        last_error: Sphalma | None = None
+        last_error: HorasisError | None = None
         for attempt in range(self._max_retries + 1):
             retry_after: float | None = None
             try:
@@ -213,7 +213,7 @@ class RemoteAdapter(Mechane):
                 )
             else:
                 if response.status_code == 200:
-                    return self._parse(praxis, response, (time.perf_counter() - start) * 1000)
+                    return self._parse(task, response, (time.perf_counter() - start) * 1000)
                 body = _safe_json(response)
                 last_error = map_error_response(response.status_code, body, response.headers)
                 retry_after = _retry_after(response.headers)
@@ -229,17 +229,17 @@ class RemoteAdapter(Mechane):
         assert last_error is not None
         raise last_error
 
-    def _parse(self, praxis: Praxis, response: Any, latency_ms: float) -> Theoria:
+    def _parse(self, task: Task, response: Any, latency_ms: float) -> Result:
         payload = _safe_json(response)
         if not isinstance(payload, dict):
             raise RemoteError("Remote server returned a non-object JSON body", status_code=200)
         try:
-            result = _RESULT_TYPES[praxis].model_validate(
-                {**payload, "praxis": praxis.value, "backend": self.name, "latency_ms": latency_ms}
+            result = _RESULT_TYPES[task].model_validate(
+                {**payload, "task": task.value, "backend": self.name, "latency_ms": latency_ms}
             )
         except Exception as exc:
             raise RemoteError(
-                f"Remote server returned an invalid {praxis.value} result: {exc}", status_code=200
+                f"Remote server returned an invalid {task.value} result: {exc}", status_code=200
             ) from exc
         return result
 

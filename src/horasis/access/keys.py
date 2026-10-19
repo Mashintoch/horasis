@@ -11,19 +11,19 @@ import time
 from dataclasses import dataclass
 from typing import Protocol
 
-from horasis.access.klimax import Klimax
-from horasis.access.prosopon import Prosopon
-from horasis.foundation.sphalma import ExpiredApiKeyError, InvalidApiKeyError, RevokedApiKeyError
+from horasis.access.principal import Principal
+from horasis.access.tiers import Tier
+from horasis.foundation.errors import ExpiredApiKeyError, InvalidApiKeyError, RevokedApiKeyError
 
 
 class ApiKeyValidator(Protocol):
 
-    """Resolves a raw API key string into an authenticated :class:`Prosopon`."""
+    """Resolves a raw API key string into an authenticated :class:`Principal`."""
 
 
-    def validate(self, api_key: str) -> Prosopon:
+    def validate(self, api_key: str) -> Principal:
 
-        """Return the :class:`Prosopon` for `api_key`.
+        """Return the :class:`Principal` for `api_key`.
 
 
         Raises:
@@ -52,7 +52,7 @@ class InMemoryApiKeyValidator:
     def __init__(self) -> None:
 
 
-        self._keys: dict[str, tuple[Prosopon, float | None, bool]] = {}
+        self._keys: dict[str, tuple[Principal, float | None, bool]] = {}
 
 
     def register(
@@ -61,7 +61,7 @@ class InMemoryApiKeyValidator:
 
         api_key: str,
 
-        principal: Prosopon,
+        principal: Principal,
 
         *,
 
@@ -84,7 +84,7 @@ class InMemoryApiKeyValidator:
 
         principal_id: str,
 
-        tier: Klimax,
+        tier: Tier,
 
         expires_at: float | None = None,
 
@@ -96,7 +96,7 @@ class InMemoryApiKeyValidator:
 
             api_key,
 
-            Prosopon(principal_id=principal_id, tier=tier, scopes=scopes),
+            Principal(principal_id=principal_id, tier=tier, scopes=scopes),
 
             expires_at=expires_at,
 
@@ -121,7 +121,7 @@ class InMemoryApiKeyValidator:
             self._keys[api_key] = (principal, expires_at, True)
 
 
-    def validate(self, api_key: str) -> Prosopon:
+    def validate(self, api_key: str) -> Principal:
 
         if not api_key:
 
@@ -164,7 +164,7 @@ class _KeyRecord:
 
     digest: bytes
 
-    principal: Prosopon
+    principal: Principal
 
     expires_at: float | None
 
@@ -192,7 +192,7 @@ class HashedApiKeyValidator:
     at :meth:`issue` time, and cannot be recovered afterwards.
 
 
-    Supports expiry, revocation and scopes (which praxeis the key may call).
+    Supports expiry, revocation and scopes (which tasks the key may call).
 
     Records live in memory; use :meth:`export_records` / :meth:`load_records`
 
@@ -217,7 +217,7 @@ class HashedApiKeyValidator:
 
         principal_id: str,
 
-        tier: Klimax,
+        tier: Tier,
 
         expires_at: float | None = None,
 
@@ -235,7 +235,7 @@ class HashedApiKeyValidator:
 
         salt = os.urandom(16)
 
-        principal = Prosopon(
+        principal = Principal(
 
             principal_id=principal_id, tier=tier, scopes=scopes, metadata=metadata or {}
 
@@ -272,7 +272,7 @@ class HashedApiKeyValidator:
             record.revoked = True
 
 
-    def validate(self, api_key: str) -> Prosopon:
+    def validate(self, api_key: str) -> Principal:
 
         parts = self._split(api_key) if api_key else None
 
@@ -352,7 +352,7 @@ class HashedApiKeyValidator:
 
                 digest=bytes.fromhex(str(r["digest"])),
 
-                principal=Prosopon.model_validate(r["principal"]),
+                principal=Principal.model_validate(r["principal"]),
 
                 expires_at=r["expires_at"],  # type: ignore[arg-type]
 

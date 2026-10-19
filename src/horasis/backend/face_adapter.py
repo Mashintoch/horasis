@@ -8,24 +8,24 @@ from pathlib import Path
 from typing import Any
 
 from horasis import models
-from horasis.backend._common import doxa
-from horasis.backend.mechane import Mechane
-from horasis.foundation.imaging import load_rgb
-from horasis.foundation.schemas import BoundingBox, Face, FaceResult, Physis, Praxis, Theoria
-from horasis.foundation.sphalma import (
+from horasis.backend._common import to_confidence
+from horasis.backend.base import Backend
+from horasis.foundation.errors import (
     AdapterError,
     BackendUnavailableError,
+    HorasisError,
     ModelDownloadError,
-    Sphalma,
 )
+from horasis.foundation.imaging import load_rgb
+from horasis.foundation.schemas import BoundingBox, Face, FaceResult, Image, Result, Task
 
 MODEL_ENV_VAR = "HORASIS_YUNET_MODEL"
 MODEL_NAME = "yunet"
 LANDMARK_NAMES = ("right_eye", "left_eye", "nose", "mouth_right", "mouth_left")
 
 
-class YuNetFaceAdapter(Mechane):
-    """`Mechane` that finds faces with OpenCV's YuNet detector.
+class YuNetFaceAdapter(Backend):
+    """`Backend` that finds faces with OpenCV's YuNet detector.
 
     YuNet is a ~230 KB ONNX model, so this is the lightest face backend.
     It only *locates* faces -- it never identifies or recognizes anyone.
@@ -33,7 +33,7 @@ class YuNetFaceAdapter(Mechane):
 
     The model file is found in this order: `model_path`, the
     ``HORASIS_YUNET_MODEL`` env var, then the horasis model cache. Fetch it
-    with ``horasis models pull yunet``, or set ``Kanon(auto_download_models=True)``
+    with ``horasis models pull yunet``, or set ``Config(auto_download_models=True)``
     to download it on first use.
 
     Args:
@@ -47,7 +47,7 @@ class YuNetFaceAdapter(Mechane):
         name: Registry name; defaults to ``"yunet"``.
     """
 
-    supported_praxeis = frozenset({Praxis.FACE})
+    supported_tasks = frozenset({Task.FACE})
 
     def __init__(
         self,
@@ -100,7 +100,7 @@ class YuNetFaceAdapter(Mechane):
                 raise BackendUnavailableError(f"Could not fetch the YuNet model: {exc}") from exc
         raise BackendUnavailableError(
             "The YuNet face model is not available. Run `horasis models pull yunet`, "
-            f"pass model_path=..., set {MODEL_ENV_VAR}, or use Kanon(auto_download_models=True)."
+            f"pass model_path=..., set {MODEL_ENV_VAR}, or use Config(auto_download_models=True)."
         )
 
     def is_loaded(self) -> bool:
@@ -112,10 +112,10 @@ class YuNetFaceAdapter(Mechane):
     def warm_up(self) -> None:
         self._load_detector()
 
-    def infer(self, praxis: Praxis, image: Physis, **options: Any) -> Theoria:
-        if not self.supports(praxis):
+    def infer(self, task: Task, image: Image, **options: Any) -> Result:
+        if not self.supports(task):
             raise BackendUnavailableError(
-                f"YuNetFaceAdapter does not support praxis {praxis.value!r}"
+                f"YuNetFaceAdapter does not support task {task.value!r}"
             )
         with_landmarks = bool(options.get("landmarks", self._landmarks))
         start = time.perf_counter()
@@ -140,12 +140,12 @@ class YuNetFaceAdapter(Mechane):
                 faces.append(
                     Face(
                         label="face",
-                        confidence=doxa(row[14]),
+                        confidence=to_confidence(row[14]),
                         box=BoundingBox(x_min=x, y_min=y, x_max=x + w, y_max=y + h),
                         landmarks=marks,
                     )
                 )
-        except Sphalma:
+        except HorasisError:
             raise
         except Exception as exc:
             raise AdapterError(f"Face detection failed: {exc}") from exc

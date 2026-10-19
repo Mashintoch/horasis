@@ -2,39 +2,39 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from horasis.foundation.schemas import Kinesis, Physis, Praxis, Theoria
-from horasis.foundation.sphalma import BackendUnavailableError
+from horasis.foundation.errors import BackendUnavailableError
+from horasis.foundation.schemas import Image, Result, Task, Video
 
 
-class Mechane(ABC):
+class Backend(ABC):
     """Abstract backend. Depends only on the foundation layer."""
 
     name: str
 
-    supported_praxeis: frozenset[Praxis]
-    supported_video_praxeis: frozenset[Praxis] = frozenset()
-    supported_video_annotate_praxeis: frozenset[Praxis] = frozenset()
+    supported_tasks: frozenset[Task]
+    supported_video_tasks: frozenset[Task] = frozenset()
+    supported_video_annotate_tasks: frozenset[Task] = frozenset()
 
     #: Explicit device for this backend (``auto``/``cpu``/``cuda``/``mps``), or
-    #: ``None`` to follow ``Kanon.device`` (set via ``Taxis.configure``).
+    #: ``None`` to follow ``Config.device`` (set via ``BackendRegistry.configure``).
     device: str | None = None
     default_device: str = "auto"
     #: Whether backends may download missing model files on first use
-    #: (``Kanon.auto_download_models``, set via ``Taxis.configure``).
+    #: (``Config.auto_download_models``, set via ``BackendRegistry.configure``).
     default_auto_download: bool = False
 
     @abstractmethod
-    def infer(self, praxis: Praxis, image: Physis, **options: object) -> Theoria:
-        """Run inference and return a :class:`Theoria` subclass instance.
+    def infer(self, task: Task, image: Image, **options: object) -> Result:
+        """Run inference and return a :class:`Result` subclass instance.
 
         Raises:
             AdapterError: if inference fails for any reason.
-            BackendUnavailableError: if `praxis` is not supported by this backend.
+            BackendUnavailableError: if `task` is not supported by this backend.
         """
         raise NotImplementedError
 
-    def infer_video(self, praxis: Praxis, video: Kinesis, **options: object) -> Theoria:
-        """Run inference over a video and return a :class:`Theoria` subclass instance.
+    def infer_video(self, task: Task, video: Video, **options: object) -> Result:
+        """Run inference over a video and return a :class:`Result` subclass instance.
 
         Optional extension point -- most backends only implement `infer`
         for still images. The default implementation always raises.
@@ -42,19 +42,19 @@ class Mechane(ABC):
         Raises:
             AdapterError: if inference fails for any reason.
             BackendUnavailableError: if this backend does not support video,
-                or does not support `praxis` for video.
+                or does not support `task` for video.
         """
         raise BackendUnavailableError(f"{type(self).__name__} does not support video inference")
 
     def infer_video_and_annotate(
-        self, praxis: Praxis, video: Kinesis, *, output_path: object, **options: object
-    ) -> tuple[Theoria, object]:
+        self, task: Task, video: Video, *, output_path: object, **options: object
+    ) -> tuple[Result, object]:
         """Run video inference and write an annotated video in a single pass.
 
         Optional, performance-oriented extension point: a backend that
         implements this can decode the video once and reuse the same
         decoded frames for both inference and drawing, instead of the
-        caller doing `infer_video()` then `Theoria.annotate()` separately
+        caller doing `infer_video()` then `Result.annotate()` separately
         (which decodes the video twice). Requires the optional `viz` extra.
         The default implementation always raises.
 
@@ -64,23 +64,23 @@ class Mechane(ABC):
         Raises:
             AdapterError: if inference fails for any reason.
             BackendUnavailableError: if this backend does not support this
-                combined operation, or does not support `praxis` for it.
+                combined operation, or does not support `task` for it.
         """
         raise BackendUnavailableError(
             f"{type(self).__name__} does not support combined video detect-and-annotate"
         )
 
-    def supports(self, praxis: Praxis) -> bool:
-        return praxis in self.supported_praxeis
+    def supports(self, task: Task) -> bool:
+        return task in self.supported_tasks
 
-    def supports_video(self, praxis: Praxis) -> bool:
-        return praxis in self.supported_video_praxeis
+    def supports_video(self, task: Task) -> bool:
+        return task in self.supported_video_tasks
 
-    def supports_video_annotate(self, praxis: Praxis) -> bool:
-        return praxis in self.supported_video_annotate_praxeis
+    def supports_video_annotate(self, task: Task) -> bool:
+        return task in self.supported_video_annotate_tasks
 
     def effective_device(self) -> str:
-        """The device to use: this backend's own setting, else the Kanon default."""
+        """The device to use: this backend's own setting, else the Config default."""
         return self.device or self.default_device
 
     def is_loaded(self) -> bool:

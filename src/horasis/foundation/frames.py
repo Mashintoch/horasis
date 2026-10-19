@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
-from horasis.foundation.sphalma import ValidationError, VisualizationUnavailableError
+from horasis.foundation.errors import ValidationError, VisualizationUnavailableError
 
 
 def _default_capture(source: str | int) -> Any:

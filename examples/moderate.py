@@ -3,7 +3,7 @@
     pip install 'horasis[moderation]'
     python examples/moderate.py upload.jpg
 
-Thresholds come from Kanon (``moderation_threshold`` / ``moderation_thresholds``).
+Thresholds come from Config (``moderation_threshold`` / ``moderation_thresholds``).
 """
 
 from __future__ import annotations
@@ -21,9 +21,9 @@ def run(client, key, image):
 
 
 if __name__ == "__main__":
-    from horasis import Kanon
+    from horasis import Config
     from horasis.backend import TransformersModerationAdapter
 
-    kanon = Kanon.default().model_copy(update={"moderation_thresholds": {"nsfw": 0.7}})
-    client, key = demo_client(kanon=kanon, backends=[TransformersModerationAdapter()])
+    config = Config.default().model_copy(update={"moderation_thresholds": {"nsfw": 0.7}})
+    client, key = demo_client(config=config, backends=[TransformersModerationAdapter()])
     run(client, key, image_argument())

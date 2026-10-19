@@ -5,40 +5,40 @@ foundation layer (Layer 1). Higher layers (orchestration, public API)
 depend on this layer, never the reverse.
 """
 
+from horasis.access.guard import AccessContext, requires_access
 from horasis.access.keys import ApiKeyValidator, HashedApiKeyValidator, InMemoryApiKeyValidator
-from horasis.access.klimax import Klimax
-from horasis.access.limen import AccessContext, limen
-from horasis.access.metron import (
+from horasis.access.policy import Policy
+from horasis.access.principal import AnonymousPrincipal, Principal
+from horasis.access.quota import (
     InMemoryQuotaStore,
-    Metron,
+    QuotaManager,
     QuotaStore,
     UsageReport,
     WindowUsage,
 )
-from horasis.access.nomos import Nomos
-from horasis.access.prosopon import AnonymousProsopon, Prosopon
 from horasis.access.ratelimit import RateLimiter, RedisRateLimiter, TokenBucketLimiter
 from horasis.access.stores import RedisQuotaStore, SQLiteQuotaStore, redis_backends
+from horasis.access.tiers import Tier
 
 __all__ = [
     "AccessContext",
-    "AnonymousProsopon",
+    "AnonymousPrincipal",
     "ApiKeyValidator",
     "HashedApiKeyValidator",
     "InMemoryApiKeyValidator",
     "InMemoryQuotaStore",
-    "Klimax",
-    "Metron",
-    "Nomos",
-    "Prosopon",
+    "Policy",
+    "Principal",
+    "QuotaManager",
     "QuotaStore",
     "RateLimiter",
     "RedisQuotaStore",
     "RedisRateLimiter",
     "SQLiteQuotaStore",
+    "Tier",
     "TokenBucketLimiter",
     "UsageReport",
     "WindowUsage",
-    "limen",
     "redis_backends",
+    "requires_access",
 ]

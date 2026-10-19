@@ -8,8 +8,8 @@ import time
 from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
-from horasis.foundation.kanon import RateRule, TierRule
-from horasis.foundation.sphalma import BackendUnavailableError, RateLimitedError
+from horasis.foundation.config import RateRule, TierRule
+from horasis.foundation.errors import BackendUnavailableError, RateLimitedError
 
 
 @runtime_checkable
@@ -21,22 +21,22 @@ class RateLimiter(Protocol):
 
     shared: bool
 
-    def acquire(self, principal_id: str, praxis: str, tier: TierRule, cost: int = 1) -> None:
+    def acquire(self, principal_id: str, task: str, tier: TierRule, cost: int = 1) -> None:
         """Take `cost` tokens from every applicable bucket, or none (raises ``RateLimitedError``)."""
 
-    def refund(self, principal_id: str, praxis: str, tier: TierRule, cost: int = 1) -> None:
+    def refund(self, principal_id: str, task: str, tier: TierRule, cost: int = 1) -> None:
         """Return tokens taken by `acquire`."""
 
 
 def _rules_for(
-    principal_id: str, praxis: str, tier: TierRule
+    principal_id: str, task: str, tier: TierRule
 ) -> list[tuple[str, str, RateRule]]:
     """``(scope, bucket name, rule)`` for every rate rule that applies to this call."""
     rules: list[tuple[str, str, RateRule]] = []
     if tier.rate is not None:
         rules.append(("rate", f"{principal_id}:*", tier.rate))
-    if praxis in tier.praxis_rates:
-        rules.append((f"rate:{praxis}", f"{principal_id}:{praxis}", tier.praxis_rates[praxis]))
+    if task in tier.task_rates:
+        rules.append((f"rate:{task}", f"{principal_id}:{task}", tier.task_rates[task]))
     return rules
 
 
@@ -54,7 +54,7 @@ def _rate_error(
 
 
 class TokenBucketLimiter:
-    """Thread-safe token buckets keyed by principal (and praxis).
+    """Thread-safe token buckets keyed by principal (and task).
 
     Each :class:`RateRule` is a bucket holding ``capacity`` tokens that
     refills at ``per_minute / 60`` tokens per second. A call costs ``cost``
@@ -78,18 +78,18 @@ class TokenBucketLimiter:
 
     @staticmethod
     def _rules(
-        principal_id: str, praxis: str, tier: TierRule
+        principal_id: str, task: str, tier: TierRule
     ) -> list[tuple[str, str, RateRule]]:
-        return _rules_for(principal_id, praxis, tier)
+        return _rules_for(principal_id, task, tier)
 
-    def acquire(self, principal_id: str, praxis: str, tier: TierRule, cost: int = 1) -> None:
+    def acquire(self, principal_id: str, task: str, tier: TierRule, cost: int = 1) -> None:
         """Take `cost` tokens from every applicable bucket, or take none.
 
         Raises:
             RateLimitedError: with ``retry_after`` (seconds) and the ``limit``
                 of the bucket that rejected the call.
         """
-        rules = self._rules(principal_id, praxis, tier)
+        rules = self._rules(principal_id, task, tier)
         if not rules:
             return
         with self._lock:
@@ -102,11 +102,11 @@ class TokenBucketLimiter:
             for _scope, key, _rule, tokens in levels:
                 self._buckets[key] = (tokens - cost, now)
 
-    def refund(self, principal_id: str, praxis: str, tier: TierRule, cost: int = 1) -> None:
+    def refund(self, principal_id: str, task: str, tier: TierRule, cost: int = 1) -> None:
         """Return tokens taken by `acquire` (when a later check rejected the call)."""
         with self._lock:
             now = self._clock()
-            for _scope, key, rule in self._rules(principal_id, praxis, tier):
+            for _scope, key, rule in self._rules(principal_id, task, tier):
                 tokens = min(float(rule.capacity), self._peek(key, rule, now) + cost)
                 self._buckets[key] = (tokens, now)
 
@@ -223,8 +223,8 @@ class RedisRateLimiter:
             args += [rule.capacity, rule.per_minute]
         return keys, args
 
-    def acquire(self, principal_id: str, praxis: str, tier: TierRule, cost: int = 1) -> None:
-        rules = _rules_for(principal_id, praxis, tier)
+    def acquire(self, principal_id: str, task: str, tier: TierRule, cost: int = 1) -> None:
+        rules = _rules_for(principal_id, task, tier)
         if not rules:
             return
         keys, args = self._call(rules, principal_id, cost)
@@ -235,8 +235,8 @@ class RedisRateLimiter:
         wait = None if wait_ms < 0 else math.ceil(wait_ms) / 1000.0
         raise _rate_error(scope, rule, principal_id, wait)
 
-    def refund(self, principal_id: str, praxis: str, tier: TierRule, cost: int = 1) -> None:
-        rules = _rules_for(principal_id, praxis, tier)
+    def refund(self, principal_id: str, task: str, tier: TierRule, cost: int = 1) -> None:
+        rules = _rules_for(principal_id, task, tier)
         if rules:
             keys, args = self._call(rules, principal_id, cost)
             self._refund(keys=keys, args=args)

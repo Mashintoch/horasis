@@ -12,9 +12,9 @@ from _common import demo_client
 
 
 async def run(client, key, images):
-    from horasis import AsyncSkopos
+    from horasis import AsyncClient
 
-    async with AsyncSkopos(client, max_workers=4) as aclient:
+    async with AsyncClient(client, max_workers=4) as aclient:
         items = await aclient.detection.detect_batch(images, api_key=key)
         for item in items:
             if item.ok:
