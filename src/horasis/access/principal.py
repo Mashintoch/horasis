@@ -10,7 +10,7 @@ class Principal(BaseModel):
 
     Attributes:
         principal_id: Stable identifier for the caller (never the raw key).
-        tier: The caller's :class:`Tier` tier.
+        tier: The caller's tier.
         metadata: Free-form data attached by the key-validation backend
             (e.g. organization name, plan expiry).
         scopes: Task values this caller's key may invoke, or ``None`` for
@@ -26,7 +26,7 @@ class Principal(BaseModel):
 
 
 class AnonymousPrincipal(Principal):
-    """Sentinel principal used only in tests / local development."""
+    """Principal for tests and local development."""
 
     principal_id: str = "anonymous"
     tier: Tier = Tier.FREE

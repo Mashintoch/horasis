@@ -11,13 +11,13 @@ from horasis.foundation.errors import QuotaExceededError
 
 
 def window_start(window_seconds: int, now: float | None = None) -> int:
-    """Start (epoch seconds) of the fixed window containing `now`."""
+    """Return the start, in epoch seconds, of the window containing `now`."""
     t = int(time.time() if now is None else now)
     return t - (t % window_seconds)
 
 
 def seconds_until_reset(window_seconds: int, now: float | None = None) -> float:
-    """Seconds left in the current fixed window."""
+    """Return the seconds left in the current window."""
     t = time.time() if now is None else now
     return window_seconds - (t - window_start(window_seconds, t))
 
@@ -40,10 +40,10 @@ class QuotaStore(Protocol):
 
 
 class InMemoryQuotaStore:
-    """Thread-safe, fixed-window counter held in process memory.
+    """Fixed-window counters in process memory, safe across threads.
 
-    Not suitable for multi-process deployments; use ``SQLiteQuotaStore``
-    (one host) or ``RedisQuotaStore`` (many hosts).
+    For several processes use ``SQLiteQuotaStore`` (one host) or
+    ``RedisQuotaStore`` (many hosts).
     """
 
     def __init__(self) -> None:
@@ -82,7 +82,7 @@ class WindowUsage(BaseModel):
 
 
 class UsageReport(BaseModel):
-    """What a caller has used and has left, in quota units (see ``Config.task_cost``).
+    """Used and remaining quota units for one caller (see ``Config.task_cost``).
 
     Attributes:
         principal_id: Who the report is for.
@@ -129,8 +129,8 @@ class QuotaManager:
         if count > rule.limit:
             self._store.increment_and_get(key, window_seconds=rule.window_seconds, amount=-cost)
             raise QuotaExceededError(
-                f"Quota exceeded for principal {principal_id!r} ({scope}): "
-                f"{rule.limit} units / {rule.window_seconds}s",
+                f"quota exceeded for principal {principal_id!r} ({scope}): "
+                f"{rule.limit} units per {rule.window_seconds}s",
                 limit=rule.limit,
                 used=count,
                 window_seconds=rule.window_seconds,
@@ -143,7 +143,7 @@ class QuotaManager:
     def refund(
         self, principal_id: str, rule: QuotaRule, *, cost: int = 1, scope: str = "quota"
     ) -> None:
-        """Give back `cost` units (e.g. when a later check rejected the call)."""
+        """Give back `cost` units, e.g. when a later check rejected the call."""
         self._store.increment_and_get(
             self._key(principal_id, rule, scope), window_seconds=rule.window_seconds, amount=-cost
         )

@@ -31,7 +31,7 @@ class RateLimiter(Protocol):
 def _rules_for(
     principal_id: str, task: str, tier: TierRule
 ) -> list[tuple[str, str, RateRule]]:
-    """``(scope, bucket name, rule)`` for every rate rule that applies to this call."""
+    """Return ``(scope, bucket name, rule)`` for each rate rule that applies."""
     rules: list[tuple[str, str, RateRule]] = []
     if tier.rate is not None:
         rules.append(("rate", f"{principal_id}:*", tier.rate))
@@ -44,7 +44,7 @@ def _rate_error(
     scope: str, rule: RateRule, principal_id: str, wait: float | None
 ) -> RateLimitedError:
     return RateLimitedError(
-        f"Rate limit exceeded ({scope}): {rule.per_minute} units/minute"
+        f"rate limit exceeded ({scope}): {rule.per_minute} units/minute"
         + (" (call costs more than the burst size)" if wait is None else ""),
         limit=rule.per_minute,
         retry_after=wait,
@@ -58,8 +58,8 @@ class TokenBucketLimiter:
 
     Each :class:`RateRule` is a bucket holding ``capacity`` tokens that
     refills at ``per_minute / 60`` tokens per second. A call costs ``cost``
-    tokens. State lives in this process, so with several workers each one
-    enforces its own bucket -- use :class:`RedisRateLimiter` to share them.
+    tokens. State lives in this process, so each worker enforces its own
+    buckets; use :class:`RedisRateLimiter` to share them.
 
     Args:
         clock: Monotonic seconds source (injectable for tests).
@@ -111,8 +111,8 @@ class TokenBucketLimiter:
                 self._buckets[key] = (tokens, now)
 
 
-# Both scripts read Redis server time (TIME), never a client clock, and run atomically
-# across all of a call's buckets. Bucket state: hash {t: tokens, ts: last update in ms}.
+# Both scripts use Redis server TIME, not a client clock, so worker clock skew cannot matter.
+# Bucket state: hash {t: tokens, ts: last update in ms}.
 _ACQUIRE_LUA = """
 local time = redis.call('TIME')
 local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
@@ -171,15 +171,14 @@ return 1
 class RedisRateLimiter:
     """Token buckets shared by every worker through Redis (extra: ``horasis[redis]``).
 
-    The same bucket semantics as :class:`TokenBucketLimiter`, but the whole
-    check-refill-take step is one Lua script, so it is atomic across workers
-    and hosts, and it uses the Redis server's clock (``TIME``) so clock skew
-    between workers cannot matter. Buckets are keyed per principal + scope.
+    Same semantics as :class:`TokenBucketLimiter`. Each check-refill-take
+    step is one Lua script, so it is atomic across workers and hosts. Buckets
+    are keyed per principal and scope.
 
     Args:
-        client: A ``redis.Redis``-compatible client (it may be the very same
-            one given to :class:`~horasis.access.stores.RedisQuotaStore`). If
-            omitted, one is built from `url`.
+        client: A ``redis.Redis``-compatible client, which may be shared with
+            :class:`~horasis.access.stores.RedisQuotaStore`. If omitted, one
+            is built from `url`.
         url: Redis URL used when no client is given.
         prefix: Key prefix. The principal is wrapped in ``{}`` so all of a
             principal's buckets share a Redis Cluster hash slot.
@@ -199,8 +198,7 @@ class RedisRateLimiter:
                 import redis
             except ImportError as exc:
                 raise BackendUnavailableError(
-                    "The 'redis' package is required for RedisRateLimiter. "
-                    "Install it with: pip install 'horasis[redis]'"
+                    "RedisRateLimiter needs the redis package: pip install 'horasis[redis]'"
                 ) from exc
             client = redis.Redis.from_url(url)
         self._client = client

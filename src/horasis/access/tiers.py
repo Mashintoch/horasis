@@ -1,4 +1,4 @@
-"""Tier -- access tiers."""
+"""Access tiers."""
 
 from __future__ import annotations
 
@@ -19,4 +19,4 @@ class Tier(str, Enum):
         try:
             return cls(value)
         except ValueError as exc:
-            raise ValueError(f"Unknown tier: {value!r}") from exc
+            raise ValueError(f"unknown tier {value!r}") from exc

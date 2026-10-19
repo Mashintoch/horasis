@@ -1,16 +1,14 @@
-"""requires_access -- the access-control decorator.
+"""The access-control decorator.
 
-``requires_access`` is Latin for "threshold." Every public-API call crosses this
-threshold before it reaches orchestration: the caller's API key is
-resolved to a :class:`~horasis.access.principal.Principal`, :class:`~horasis.access.policy.Policy`
-authorizes the requested :class:`~horasis.foundation.schemas.Task`,
-:class:`~horasis.access.quota.QuotaManager` consumes one unit of quota, and
-:class:`~horasis.foundation.telemetry.Telemetry` hooks fire around the
-wrapped call.
+Every public-API call passes through :func:`requires_access` before it
+reaches orchestration. The API key is resolved to a
+:class:`~horasis.access.principal.Principal`,
+:class:`~horasis.access.policy.Policy` authorizes the task, rate limits and
+quota are charged, and :class:`~horasis.foundation.telemetry.Telemetry`
+hooks fire around the call.
 
-`requires_access` is deliberately generic: it decorates any callable whose owning
-object exposes an :class:`AccessContext` via a `_access` attribute, and
-that accepts `api_key` as a keyword argument.
+It decorates methods of any object that keeps an :class:`AccessContext` in
+``_access`` and takes ``api_key`` as a keyword argument.
 """
 
 from __future__ import annotations
@@ -37,11 +35,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 @dataclass(frozen=True)
 class AccessContext:
-    """Bundles everything `requires_access` needs to guard a call.
-
-    An object exposing a `_access: AccessContext` attribute (typically a
-    Layer 5 public-API class) can have its methods decorated with `@requires_access`.
-    """
+    """Everything `requires_access` needs to guard a call."""
 
     config: Config
     validator: ApiKeyValidator
@@ -102,7 +96,7 @@ class AccessContext:
         return specific or overall
 
     def usage(self, principal: Principal) -> UsageReport:
-        """Used/remaining units for `principal`, overall and per allowed task."""
+        """Return used and remaining units for `principal`, overall and per task."""
         rule = self.config.tier(principal.tier.value)
         pid = principal.principal_id
         per_task = {
@@ -123,7 +117,7 @@ class AccessContext:
 def _validated_inputs(
     access: AccessContext, args: tuple[Any, ...], kwargs: dict[str, Any]
 ) -> tuple[tuple[Any, ...], dict[str, Any]]:
-    """Decode/validate the image argument (first positional, or ``image=``) up front.
+    """Decode and validate the image argument (first positional, or ``image=``).
 
     The decoded `Image` replaces the raw input, so the wrapped method does not
     decode twice and malformed input is rejected before anything is charged.
@@ -137,20 +131,16 @@ def _validated_inputs(
 
 
 def requires_access(task: Task, *, validate_image: bool = True) -> Callable[[F], F]:
-    """Decorator that enforces authentication, authorization, and quota.
+    """Authenticate, authorize and charge quota before running the method.
+
+    The method must be called with an ``api_key`` keyword and its instance
+    must keep an :class:`AccessContext` in ``_access``. It receives the
+    resolved ``principal`` as a keyword argument.
 
     Args:
-        task: The task type this method performs; used both for
-            authorization against :class:`~horasis.access.policy.Policy` and
-            for telemetry.
-        validate_image: Decode and validate the image argument *before* charging
-            quota, so invalid input costs nothing. Set False for non-image inputs
-            (video).
-
-    The wrapped method must be called with an `api_key: str` keyword
-    argument, and the wrapped instance must expose `self._access: AccessContext`.
-    On success, the wrapped method additionally receives `principal:
-    Principal` as a keyword argument.
+        task: Task the method performs, for authorization and telemetry.
+        validate_image: Decode and validate the image argument before
+            charging, so invalid input costs nothing. Set False for video.
     """
 
     def decorator(func: F) -> F:

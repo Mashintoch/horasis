@@ -1,8 +1,6 @@
-"""Layer 4 -- Access control.
+"""Layer 4: API keys, tiers, quotas and rate limits.
 
-API-key based, tiered, quota-aware authorization. Depends only on the
-foundation layer (Layer 1). Higher layers (orchestration, public API)
-depend on this layer, never the reverse.
+Imports only from the foundation layer.
 """
 
 from horasis.access.guard import AccessContext, requires_access

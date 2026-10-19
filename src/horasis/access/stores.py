@@ -13,11 +13,11 @@ from horasis.foundation.errors import BackendUnavailableError
 
 
 class SQLiteQuotaStore:
-    """Fixed-window counters in a SQLite file; safe across threads *and* processes.
+    """Fixed-window counters in a SQLite file, safe across threads and processes.
 
     Each increment runs inside a ``BEGIN IMMEDIATE`` transaction, so SQLite's
     write lock serializes concurrent writers and counts never collide.
-    Old windows are pruned opportunistically.
+    Old windows are pruned on write.
 
     Args:
         path: Database file (``":memory:"`` works for single-connection tests).
@@ -75,7 +75,7 @@ class SQLiteQuotaStore:
 class RedisQuotaStore:
     """Fixed-window counters in Redis (extra: ``horasis[redis]``).
 
-    Uses ``INCRBY`` (atomic) on a key per window, expired automatically.
+    One ``INCRBY`` key per window, with an expiry.
 
     Args:
         client: A ``redis.Redis``-compatible client. If omitted, one is built
@@ -96,8 +96,7 @@ class RedisQuotaStore:
                 import redis
             except ImportError as exc:
                 raise BackendUnavailableError(
-                    "The 'redis' package is required for RedisQuotaStore. "
-                    "Install it with: pip install 'horasis[redis]'"
+                    "RedisQuotaStore needs the redis package: pip install 'horasis[redis]'"
                 ) from exc
             client = redis.Redis.from_url(url)
         self._client = client
@@ -130,10 +129,9 @@ class RedisQuotaStore:
 def redis_backends(
     client: Any = None, *, url: str = "redis://localhost:6379/0"
 ) -> tuple[RedisQuotaStore, RedisRateLimiter]:
-    """A quota store and a rate limiter sharing one Redis client (and connection pool).
+    """Return a quota store and a rate limiter that share one Redis client.
 
-    Usage: ``store, limiter = redis_backends(url=...)`` then
-    ``Client.build(quota_store=store, rate_limiter=limiter)``.
+    Pass them to ``Client.build(quota_store=store, rate_limiter=limiter)``.
     """
     store = RedisQuotaStore(client, url=url)
     return store, RedisRateLimiter(store.client)
