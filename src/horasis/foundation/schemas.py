@@ -46,12 +46,11 @@ class Confidence(BaseModel):
 
 
 class Image(BaseModel):
-    """Backend-agnostic representation of an input image.
+    """Input image, held as a path, encoded bytes or decoded pixels.
 
-    Build one with the ``from_*`` constructors, or let the public API do it
-    for you. Backends should read pixels through
-    :func:`horasis.foundation.imaging.load_rgb`, never from ``path``/``data``
-    directly -- that is what guarantees size limits and EXIF orientation.
+    Build one with the ``from_*`` constructors or let the public API do it.
+    Backends read pixels through :func:`horasis.foundation.imaging.load_rgb`,
+    never ``path`` or ``data``, so size limits and EXIF orientation apply.
 
     Attributes:
         source: Original source identifier: a path, URL, ``"<bytes>"``, etc.
@@ -102,7 +101,7 @@ class Image(BaseModel):
     def from_url(cls, url: str, *, timeout: float = 30.0, max_bytes: int = 20 * 1024 * 1024) -> Image:
         """Fetch `url` and wrap the downloaded bytes as a `Image`.
 
-        Calling this directly *is* the opt-in to a network request.
+        Calling this is an explicit opt-in to a network request.
 
         Raises:
             ValidationError: if the URL cannot be fetched or exceeds `max_bytes`.
@@ -117,21 +116,19 @@ class Image(BaseModel):
         if source.startswith(("http://", "https://")):
             if not allow_urls:
                 raise ValidationError(
-                    "URL inputs are disabled; pass allow_urls=True (or set "
-                    "Config.inputs.allow_urls) to opt in."
+                    "URL inputs are disabled; pass allow_urls=True or set "
+                    "Config.inputs.allow_urls"
                 )
             return cls.from_url(source)
         return cls.from_path(source)
 
 
 def _check_url_is_video(url: str, *, timeout: float) -> None:
-    """Best-effort check that `url` responds with video content.
+    """Raise if `url` reports a content type that is clearly not video.
 
-    Tries a HEAD request first, then falls back to a 1-byte ranged GET
-    (some servers reject HEAD). If neither succeeds -- e.g. the server
-    doesn't support either -- verification is skipped rather than
-    blocking a URL we simply couldn't check. Only raises when a
-    Content-Type was actually returned and it clearly isn't video.
+    Tries HEAD, then a 1-byte ranged GET because some servers reject HEAD.
+    If neither answers, the check is skipped rather than rejecting a URL that
+    could not be checked.
     """
 
     content_type: str | None = None
@@ -146,7 +143,7 @@ def _check_url_is_video(url: str, *, timeout: float) -> None:
                 content_type = response.headers.get("Content-Type")
             break
         except (urllib.error.URLError, urllib.error.HTTPError) as exc:
-            logger.debug("Failed to check URL %s with kwargs %s: %s", url, kwargs, exc)
+            logger.debug("video URL check failed for %s (%s): %s", url, kwargs, exc)
             continue
 
     if content_type is None:
@@ -157,15 +154,13 @@ def _check_url_is_video(url: str, *, timeout: float) -> None:
         return
 
     raise ValidationError(
-        f"This URL doesn't look like a direct link to a video file "
-        f"(server reported content-type {content_type!r}). Link to the raw "
-        f"video file itself, not a webpage, player, or platform page. "
-        f"Pass verify=False to skip this check if you're confident the URL is correct."
+        f"URL is not a direct link to a video file (content type {content_type!r}); "
+        "link the raw file, or pass verify=False to skip this check"
     )
 
 
 class Video(BaseModel):
-    """Backend-agnostic representation of an input video."""
+    """Input video, held as a path, URL or encoded bytes."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
@@ -186,26 +181,18 @@ class Video(BaseModel):
 
     @classmethod
     def from_url(cls, url: str, *, verify: bool = True, timeout: float = 10.0) -> Video:
-        """Wrap a video URL for streaming by the backend (not downloaded here).
+        """Wrap a video URL. The backend streams it; nothing is downloaded here.
 
         Args:
-            url: A direct link to a video file -- not a webpage, player, or
-                platform "watch" page. Works the same regardless of which
-                site or CDN hosts it, as long as the URL itself serves raw
-                video bytes.
-            verify: If True (default), makes a lightweight check (HEAD, or
-                a 1-byte ranged GET as a fallback) to confirm the URL
-                actually responds with video content before accepting it,
-                so a bad link fails immediately with a clear message
-                instead of a confusing error deep inside the backend later.
-                If the server doesn't answer that check at all, verification
-                is skipped rather than blocking a possibly-valid URL.
-            timeout: Seconds to wait for the verification request.
+            url: Direct link to a video file, not a web page or player.
+            verify: Check up front that the URL serves video (HEAD, falling
+                back to a 1-byte ranged GET), so a bad link fails here rather
+                than inside the backend. Skipped if the server answers neither.
+            timeout: Seconds to wait for the check.
 
         Raises:
-            ValidationError: if `verify` is True and the URL clearly does
-                not point directly to a video file (e.g. it returns an
-                HTML page).
+            ValidationError: if `verify` is set and the URL serves something
+                other than video, such as an HTML page.
         """
         if verify:
             _check_url_is_video(url, timeout=timeout)
@@ -213,7 +200,7 @@ class Video(BaseModel):
 
     @classmethod
     def from_source(cls, source: str) -> Video:
-        """Build a `Video` from a string that is either a URL or a local file path."""
+        """Build a `Video` from a URL or a local file path."""
         if source.startswith(("http://", "https://")):
             return cls.from_url(source)
         return cls.from_path(source)
@@ -242,7 +229,7 @@ Point = tuple[float, float]
 
 
 class TextRegion(BaseModel):
-    """A recognized unit of text produced by an OCR task.
+    """A word or line of text found by OCR.
 
     Attributes:
         text: The recognized string.
@@ -265,10 +252,10 @@ class TextRegion(BaseModel):
 
 
 class Result(BaseModel):
-    """Base class for every result ("view") returned by the public API.
+    """Base class for results returned by the public API.
 
     Attributes:
-        task: The task type that produced this result.
+        task: Task that produced this result.
         backend: Name of the backend adapter that produced the result.
         latency_ms: Wall-clock inference time in milliseconds.
         created_at: Unix timestamp when the result was constructed.
@@ -285,11 +272,11 @@ class Result(BaseModel):
     _items_field: ClassVar[str | None] = None
 
     def to_dict(self) -> dict[str, Any]:
-        """The result as plain JSON-compatible Python data."""
+        """Return the result as JSON-compatible Python data."""
         return self.model_dump(mode="json")
 
     def to_json(self, *, indent: int | None = None) -> str:
-        """The result as a JSON string."""
+        """Return the result as a JSON string."""
         return self.model_dump_json(indent=indent)
 
     def filter(
@@ -302,7 +289,7 @@ class Result(BaseModel):
             labels: Keep items whose label (class name, OCR text, or
                 moderation category) is in this collection.
 
-        Results without a list of items (none today) are returned unchanged.
+        Results without an item list are returned unchanged.
         """
         field = self._items_field
         if field is None:
@@ -319,8 +306,8 @@ class Result(BaseModel):
     def draw(self, image: Any, **options: Any) -> Any:
         """Return a PIL image with this result drawn on `image` (nothing is saved).
 
-        Needs the optional ``viz`` extra only for video; images need Pillow,
-        which is a core dependency. Extra `options` go to the drawing code
+        Images need only Pillow; video needs the ``viz`` extra. Extra
+        `options` go to the drawing code
         (``show_labels``, ``show_confidence``, ``box_color``, ``line_width``,
         ``font_size``, ``text_color``).
         """
@@ -338,12 +325,10 @@ def _label_of(item: Any) -> str:
 
 
 class FaceEstimate(BaseModel):
-    """Rough, model-estimated attributes for a detected face.
+    """Model-estimated age and gender for a detected face.
 
-    These come from a computer-vision model's statistical estimate, not
-    verified facts about the person. Expect real error rates -- do not
-    treat these as ground truth, and do not use them as the sole basis
-    for any decision about a person.
+    These are statistical estimates with real error rates, not facts about
+    the person. Do not use them as the sole basis for a decision about anyone.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -365,7 +350,7 @@ class Detection(BaseModel):
 
 
 class DetectionResult(Result):
-    """Result of an object-detection :class:`Task`."""
+    """Object-detection result."""
 
     task: Task = Task.DETECT
     detections: list[Detection] = Field(default_factory=list)
@@ -401,8 +386,7 @@ class DetectionResult(Result):
     ) -> Any:
         """Draw `self.detections` on `image` and return the annotated image.
 
-        Convenience wrapper over :func:`horasis.viz.render_detections`.
-        Requires the optional `viz` extra: `pip install horasis[viz]`.
+        Requires the ``viz`` extra.
         """
         from horasis.viz import render_detections
 
@@ -427,12 +411,10 @@ class FrameDetections(BaseModel):
 
 
 class VideoDetectionResult(Result):
-    """Result of running object detection over a video (:class:`Video` input).
+    """Object-detection result over a video.
 
-    Frames are sampled and processed in order; `frames` holds one
-    :class:`FrameDetections` per *processed* frame (see
-    `sample_every_n_frames` on `ObjectDetector.detect_video`) -- not
-    necessarily one per frame in the source video.
+    `frames` holds one :class:`FrameDetections` per processed frame, not per
+    source frame; see `sample_every_n_frames` on `ObjectDetector.detect_video`.
     """
 
     task: Task = Task.DETECT
@@ -443,7 +425,7 @@ class VideoDetectionResult(Result):
     def filter(
         self, *, min_conf: float | None = None, labels: Iterable[str] | None = None
     ) -> Self:
-        """Filter the detections inside every frame (frames themselves are kept)."""
+        """Filter the detections in every frame; the frames are kept."""
         wanted = set(labels) if labels is not None else None
         frames = [
             f.model_copy(
@@ -467,7 +449,7 @@ class VideoDetectionResult(Result):
         height: int | None = None,
         category_ids: dict[str, int] | None = None,
     ) -> dict[str, Any]:
-        """COCO export with one "image" per processed frame (id = frame index + 1)."""
+        """Export as COCO, one image per processed frame (id = frame index + 1)."""
         return detections_to_coco(
             [
                 (f.frame_index + 1, f"frame_{f.frame_index:06d}", width, height, f.detections)
@@ -485,12 +467,10 @@ class VideoDetectionResult(Result):
         show_confidence: bool = True,
         **options: Any,
     ) -> Any:
-        """Draw `self.frames` back onto `video` and write an annotated video file.
+        """Draw `self.frames` onto `video` and write an annotated video file.
 
-        Convenience wrapper over :func:`horasis.viz.render_video`. Requires
-        the optional `viz` extra: `pip install horasis[viz]`. Note this
-        re-reads `video` in a separate pass from whatever originally
-        produced this result via `detect_video`.
+        Requires the ``viz`` extra. `video` is decoded again, separately from
+        the `detect_video` call that produced this result.
         """
         from horasis.viz import render_video
 
@@ -514,7 +494,7 @@ class ClassificationEntry(BaseModel):
 
 
 class ClassificationResult(Result):
-    """Result of an image-classification :class:`Task`."""
+    """Image-classification result."""
 
     task: Task = Task.CLASSIFY
     entries: list[ClassificationEntry] = Field(default_factory=list)
@@ -528,11 +508,11 @@ class ClassificationResult(Result):
 
 
 class OcrResult(Result):
-    """Result of an OCR / text-extraction :class:`Task`.
+    """OCR result.
 
-    ``regions`` are the engine's word-level segments in reading order. When
-    they carry a ``line_index``, :attr:`lines` merges them into line-level
-    regions and :attr:`text` separates lines with newlines.
+    ``regions`` are word-level, in reading order. When they carry a
+    ``line_index``, :attr:`lines` merges them into lines and :attr:`text`
+    separates lines with newlines.
     """
 
     task: Task = Task.OCR
@@ -583,7 +563,7 @@ class OcrResult(Result):
 class Face(Detection):
     """A detected face: a box plus optional 5-point landmarks.
 
-    Detection only -- no identity is recognized or inferred.
+    Detection only; no identity is recognized or inferred.
 
     Attributes:
         landmarks: Named ``(x, y)`` points: ``right_eye``, ``left_eye``,
@@ -595,7 +575,7 @@ class Face(Detection):
 
 
 class FaceResult(Result):
-    """Result of a face-detection :class:`Task`."""
+    """Face-detection result."""
 
     task: Task = Task.FACE
     faces: list[Face] = Field(default_factory=list)
@@ -634,7 +614,7 @@ class ModerationLabel(BaseModel):
 
 
 class ModerationResult(Result):
-    """Result of a content-moderation :class:`Task`."""
+    """Content-moderation result."""
 
     task: Task = Task.MODERATE
     labels: list[ModerationLabel] = Field(default_factory=list)
@@ -715,7 +695,7 @@ class BatchItem(Generic[T]):
         return self.error is None
 
     def unwrap(self) -> T:
-        """The result, or raise this item's error."""
+        """Return the result, or raise this item's error."""
         if self.error is not None:
             raise self.error
         assert self.result is not None
@@ -743,7 +723,7 @@ class Segment(Detection):
 
 
 class SegmentationResult(Result):
-    """Result of an instance-segmentation :class:`Task`."""
+    """Instance-segmentation result."""
 
     task: Task = Task.SEGMENT
     segments: list[Segment] = Field(default_factory=list)
@@ -789,7 +769,7 @@ class Pose(Detection):
 
 
 class PoseResult(Result):
-    """Result of a pose-estimation :class:`Task`."""
+    """Pose-estimation result."""
 
     task: Task = Task.POSE
     poses: list[Pose] = Field(default_factory=list)

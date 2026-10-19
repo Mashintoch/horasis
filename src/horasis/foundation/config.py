@@ -10,7 +10,7 @@ from horasis.foundation.errors import ConfigurationError
 
 
 class QuotaRule(BaseModel):
-    """A single rate/volume limit: at most ``limit`` calls per ``window_seconds``."""
+    """Windowed quota: at most ``limit`` units per ``window_seconds``."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -43,7 +43,7 @@ DEFAULT_TASK_COST: dict[str, int] = {
 
 
 class TierRule(BaseModel):
-    """Configuration for one :class:`~horasis.access.tiers.Tier` tier."""
+    """Limits and allowed tasks for one tier."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -71,12 +71,11 @@ class TierRule(BaseModel):
 
 
 class InputPolicy(BaseModel):
-    """Rules `Image` applies when loading caller-supplied images.
+    """Limits applied when loading caller-supplied images.
 
     Attributes:
-        allow_urls: URL inputs are fetched only when this is True (off by
-            default so a caller-controlled string can never trigger a
-            network request unless the operator opted in).
+        allow_urls: Fetch URL inputs. Off by default, so a caller-supplied
+            string cannot trigger a network request unless the operator opts in.
         max_bytes: Largest accepted encoded image, in bytes.
         max_pixels: Largest accepted decoded image (width * height); guards
             against decompression bombs.
@@ -103,14 +102,13 @@ class InputPolicy(BaseModel):
 
 
 class Config(BaseModel):
-    """Top-level runtime configuration for `horasis`.
+    """Runtime configuration.
 
     Attributes:
         default_backend: Name registered in the backend registry to use
             when a task does not specify one explicitly.
         tiers: Mapping of tier name -> :class:`TierRule`.
-        telemetry_enabled: Whether :class:`~horasis.foundation.telemetry.Telemetry`
-            hooks should fire.
+        telemetry_enabled: Fire :class:`~horasis.foundation.telemetry.Telemetry` hooks.
         device: Compute device for backends that can choose: ``auto`` (let
             each backend decide; GPU if present), ``cpu``, ``cuda`` or ``mps``.
         max_loaded_models: Cap on backends holding models in memory at once;
@@ -168,11 +166,11 @@ class Config(BaseModel):
         """
         p = Path(path)
         if not p.is_file():
-            raise ConfigurationError(f"Config file not found: {p}")
+            raise ConfigurationError(f"config file not found: {p}")
         try:
             raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
         except yaml.YAMLError as exc:
-            raise ConfigurationError(f"Config file is not valid YAML: {p}") from exc
+            raise ConfigurationError(f"config file is not valid YAML: {p}") from exc
         return cls.from_dict(raw)
 
     @classmethod
@@ -180,11 +178,11 @@ class Config(BaseModel):
         try:
             return cls.model_validate(raw)
         except Exception as exc:  # pydantic.ValidationError, narrowed for callers
-            raise ConfigurationError(f"Invalid configuration: {exc}") from exc
+            raise ConfigurationError(f"invalid configuration: {exc}") from exc
 
     @classmethod
     def default(cls) -> Config:
-        """A sensible built-in configuration, used when no file is supplied."""
+        """Return the built-in configuration used when no file is given."""
         return cls(
             default_backend="ultralytics",
             telemetry_enabled=True,
@@ -207,12 +205,12 @@ class Config(BaseModel):
         )
 
     def cost_for(self, task: str) -> int:
-        """Units one call to `task` consumes (OCR/moderation cost more)."""
-        # pydantic fields look like FieldInfo to pylint, hence the no-member pragma
+        """Return the quota units one call to `task` consumes."""
+        # pylint sees pydantic fields as FieldInfo
         return max(1, self.task_cost.get(task, 1))  # pylint: disable=no-member
 
     def moderation_threshold_for(self, category: str) -> float:
-        """Flag threshold for a moderation `category` (per-category override wins)."""
+        """Return the flag threshold for a moderation `category`."""
         return self.moderation_thresholds.get(  # pylint: disable=no-member
             category, self.moderation_threshold
         )
@@ -221,4 +219,4 @@ class Config(BaseModel):
         try:
             return self.tiers[name]
         except KeyError as exc:
-            raise ConfigurationError(f"Unknown tier: {name!r}") from exc
+            raise ConfigurationError(f"unknown tier {name!r}") from exc

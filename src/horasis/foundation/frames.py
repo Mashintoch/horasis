@@ -15,7 +15,7 @@ def _default_capture(source: str | int) -> Any:
         import cv2
     except ImportError as exc:
         raise VisualizationUnavailableError(
-            "OpenCV is required for video streaming. Install it with: pip install 'horasis[video]'"
+            "video streaming needs OpenCV: pip install 'horasis[video]'"
         ) from exc
     return cv2.VideoCapture(source)
 
@@ -29,20 +29,19 @@ def iter_frames(
 ) -> Iterator[tuple[int, float, Any]]:
     """Yield ``(frame_index, timestamp_seconds, rgb_array)`` for sampled frames.
 
+    The capture is released when the generator finishes or is closed.
+
     Args:
         source: A video file path, or an ``int`` camera index (webcam).
         every_n_frames: Yield one frame out of every N read (1 = all). Skipped
             frames are still decoded, since video codecs require it.
         max_frames: Stop after yielding this many frames (a webcam never ends
             on its own).
-        capture_factory: Builds an ``cv2.VideoCapture``-like object; mainly
-            for tests.
+        capture_factory: Builds a ``cv2.VideoCapture``-like object (for tests).
 
     Raises:
         ValidationError: if the source cannot be opened or `every_n_frames` < 1.
         VisualizationUnavailableError: if OpenCV is not installed.
-
-    The capture is released when the generator finishes or is closed.
     """
     if every_n_frames < 1:
         raise ValidationError("every_n_frames must be >= 1")
@@ -50,7 +49,7 @@ def iter_frames(
     capture = (capture_factory or _default_capture)(target)
     if not capture.isOpened():
         capture.release()
-        raise ValidationError(f"Could not open video source: {source!r}")
+        raise ValidationError(f"cannot open video source {source!r}")
     try:
         fps = float(capture.get(5)) or 0.0  # cv2.CAP_PROP_FPS
         started = time.monotonic()

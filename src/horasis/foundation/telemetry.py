@@ -5,10 +5,9 @@ from typing import Any, Protocol
 
 
 class Telemetry(Protocol):
-    """Protocol for telemetry sinks.
+    """Interface for telemetry sinks.
 
-    Implementations must be cheap and non-blocking; `horasis` calls these
-    hooks synchronously on the request path.
+    Methods run synchronously on the request path, so keep them cheap.
     """
 
     def on_call_start(self, *, task: str, principal_id: str) -> None:
@@ -26,11 +25,11 @@ class Telemetry(Protocol):
         """Fired when a public API call completes, successfully or not."""
 
     def on_error(self, *, task: str, principal_id: str, error: BaseException) -> None:
-        """Fired whenever a `HorasisError` (or subclass) is raised on the request path."""
+        """Fired when a `HorasisError` is raised on the request path."""
 
 
 class NullTelemetry:
-    """No-op :class:`Telemetry` implementation; the default when telemetry is off."""
+    """Telemetry sink that does nothing; the default."""
 
     def on_call_start(self, *, task: str, principal_id: str) -> None:
         return None
@@ -51,7 +50,7 @@ class NullTelemetry:
 
 
 class LoggingTelemetry:
-    """A minimal :class:`Telemetry` implementation that writes to `logging`."""
+    """Telemetry sink that writes to `logging`."""
 
     def __init__(self, logger_name: str = "horasis.telemetry") -> None:
         import logging
@@ -91,13 +90,11 @@ class OTelTelemetry:
     histogram, tagged by task and backend. Configure the OpenTelemetry SDK
     and exporters as usual; this class only uses the API.
 
-    **No-op when OpenTelemetry is not installed**: construction succeeds,
-    ``enabled`` is ``False`` and every hook returns immediately, so you can
-    wire it in unconditionally.
+    Without OpenTelemetry installed it is a no-op: ``enabled`` is False and
+    every hook returns immediately, so it can be wired in unconditionally.
 
     Args:
-        tracer, meter: Pre-built OpenTelemetry objects (mainly for tests);
-            default to ``trace.get_tracer("horasis")`` / ``metrics.get_meter("horasis")``.
+        tracer, meter: Pre-built OpenTelemetry objects (for tests); default to ``trace.get_tracer("horasis")`` / ``metrics.get_meter("horasis")``.
     """
 
     def __init__(self, *, tracer: Any = None, meter: Any = None) -> None:

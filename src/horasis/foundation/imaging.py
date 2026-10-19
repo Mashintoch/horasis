@@ -1,18 +1,16 @@
-"""Image input handling for `Image`.
+"""Load and validate caller-supplied images.
 
-Turns whatever a caller hands us (path, bytes, URL, PIL image, numpy array)
-into a validated, EXIF-corrected RGB image carried on a :class:`Image`.
-Decoding happens once, at the API boundary; backends then read
-``img.pixels`` via :func:`load_rgb` and never touch raw caller input.
+Paths, bytes, URLs, PIL images and numpy arrays become an EXIF-corrected RGB
+:class:`Image`. Decoding happens once, at the API boundary; backends read
+pixels through :func:`load_rgb` and never touch raw caller input.
 
 Security notes:
-    * URLs are fetched only when ``InputPolicy.allow_urls`` is True. Only
-      ``http``/``https`` are accepted. The host is resolved and the request is
-      refused unless *every* resolved address is globally routable; the
-      connection is then made to the validated IP (no second lookup, so DNS
-      rebinding cannot swap the target) with SNI/certificate checks against
-      the original hostname. Redirects are followed manually (max 3) and each
-      hop is validated again. An egress firewall is still good defence in depth.
+    * URLs are fetched only when ``InputPolicy.allow_urls`` is set, and only
+      over http(s). Every resolved address must be globally routable. The
+      connection goes to the validated IP (no second lookup, so DNS rebinding
+      cannot swap the target), with SNI and certificate checks against the
+      original hostname. Redirects are followed manually, at most 3, and each
+      hop is validated again. Run an egress firewall as well.
     * Encoded size and decoded pixel count are both capped to blunt
       decompression bombs.
 """
@@ -53,7 +51,7 @@ _DECODE_ERRORS = (
 
 
 def is_url(text: str) -> bool:
-    """True if `text` looks like an http(s) URL."""
+    """Return True if `text` is an http(s) URL."""
     return urlparse(text).scheme in ("http", "https")
 
 
@@ -66,10 +64,10 @@ def decode_image(data: bytes, policy: InputPolicy | None = None) -> PILImage.Ima
     """
     policy = policy or InputPolicy()
     if not data:
-        raise ValidationError("Image data is empty")
+        raise ValidationError("image data is empty")
     if len(data) > policy.max_bytes:
         raise ValidationError(
-            f"Image is {len(data)} bytes; the limit is {policy.max_bytes} bytes",
+            f"image is {len(data)} bytes, limit is {policy.max_bytes}",
             context={"size": len(data), "max_bytes": policy.max_bytes},
         )
     try:
@@ -78,11 +76,11 @@ def decode_image(data: bytes, policy: InputPolicy | None = None) -> PILImage.Ima
         allowed = {f.upper() for f in policy.allowed_formats}
         if fmt not in allowed:
             raise ValidationError(
-                f"Image format {fmt or 'unknown'!r} is not allowed; allowed: {sorted(allowed)}"
+                f"image format {fmt or 'unknown'!r} not allowed; allowed: {sorted(allowed)}"
             )
         if opened.width * opened.height > policy.max_pixels:
             raise ValidationError(
-                f"Image is {opened.width}x{opened.height} pixels; the limit is {policy.max_pixels}"
+                f"image is {opened.width}x{opened.height} pixels, limit is {policy.max_pixels}"
             )
         opened.load()
         img: PILImage.Image = opened
@@ -90,14 +88,14 @@ def decode_image(data: bytes, policy: InputPolicy | None = None) -> PILImage.Ima
             img = ImageOps.exif_transpose(img) or img
         return img.convert("RGB")
     except _DECODE_ERRORS as exc:
-        raise ValidationError(f"Could not decode image: {exc}") from exc
+        raise ValidationError(f"cannot decode image: {exc}") from exc
 
 
 def array_to_image(array: Any, policy: InputPolicy | None = None) -> PILImage.Image:
     """Convert a numpy array to an RGB image.
 
     Accepts ``(H, W)``, ``(H, W, 1)``, ``(H, W, 3)`` or ``(H, W, 4)`` arrays
-    in **RGB(A)** channel order (convert OpenCV's BGR first). ``uint8`` is
+    in RGB(A) channel order (convert OpenCV's BGR first). ``uint8`` is
     used as-is; floats are read as ``0..1`` when their max is <= 1, else as
     ``0..255``; other integer types are clipped to ``0..255``.
     """
@@ -108,12 +106,12 @@ def array_to_image(array: Any, policy: InputPolicy | None = None) -> PILImage.Im
     if arr.ndim == 3 and arr.shape[2] == 1:
         arr = arr[..., 0]
     if arr.ndim not in (2, 3) or (arr.ndim == 3 and arr.shape[2] not in (3, 4)):
-        raise ValidationError(f"Unsupported array shape {arr.shape}; expected HxW, HxWx3 or HxWx4")
+        raise ValidationError(f"unsupported array shape {arr.shape}; expected HxW, HxWx3 or HxWx4")
     if arr.size == 0:
-        raise ValidationError("Image array is empty")
+        raise ValidationError("image array is empty")
     if arr.shape[0] * arr.shape[1] > policy.max_pixels:
         raise ValidationError(
-            f"Image is {arr.shape[1]}x{arr.shape[0]} pixels; the limit is {policy.max_pixels}"
+            f"image is {arr.shape[1]}x{arr.shape[0]} pixels, limit is {policy.max_pixels}"
         )
     if arr.dtype == np.uint8:
         pass
@@ -127,7 +125,7 @@ def array_to_image(array: Any, policy: InputPolicy | None = None) -> PILImage.Im
     elif np.issubdtype(arr.dtype, np.integer):
         arr = np.clip(arr, 0, 255).astype(np.uint8)
     else:
-        raise ValidationError(f"Unsupported array dtype {arr.dtype}")
+        raise ValidationError(f"unsupported array dtype {arr.dtype}")
     return PILImage.fromarray(arr).convert("RGB")
 
 
@@ -168,7 +166,7 @@ def _resolve_public(host: str, port: int, policy: InputPolicy) -> list[str]:
     try:
         infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except OSError as exc:
-        raise ValidationError(f"Could not resolve URL host {host!r}") from exc
+        raise ValidationError(f"cannot resolve URL host {host!r}") from exc
     addresses: list[str] = []
     for info in infos:
         text = str(info[4][0]).split("%", 1)[0]
@@ -183,7 +181,7 @@ def _resolve_public(host: str, port: int, policy: InputPolicy) -> list[str]:
         if text not in addresses:
             addresses.append(text)
     if not addresses:
-        raise ValidationError(f"Could not resolve URL host {host!r}")
+        raise ValidationError(f"cannot resolve URL host {host!r}")
     return addresses
 
 
@@ -226,7 +224,7 @@ class _PinnedHTTPSConnection(http.client.HTTPSConnection):
 def _open_connection(
     scheme: str, host: str, port: int, addresses: list[str], timeout: float
 ) -> http.client.HTTPConnection:
-    """Transport seam: a connection pinned to `addresses` (replaced in tests)."""
+    """Return a connection pinned to `addresses`. Tests replace this."""
     if scheme == "https":
         return _PinnedHTTPSConnection(host, port, addresses, timeout)
     return _PinnedHTTPConnection(host, port, addresses, timeout)
@@ -237,10 +235,10 @@ def fetch_url(
 ) -> bytes:
     """Download an image from `url` (http/https only) with SSRF protections.
 
-    Every resolved address must be globally routable; the connection goes to
-    the validated IP; redirects are followed manually (at most
-    ``MAX_REDIRECTS``) and re-validated per hop; the body is streamed and
-    aborted past `max_bytes`; the response must be ``image/*``.
+    Every resolved address must be globally routable and the connection goes
+    to the validated IP. Redirects are followed manually, at most
+    ``MAX_REDIRECTS``, and each hop is validated again. The body is streamed
+    and aborted past `max_bytes`. The response must be ``image/*``.
 
     Raises:
         ValidationError: if the request is blocked, fails, redirects too
@@ -252,13 +250,13 @@ def fetch_url(
     for _ in range(MAX_REDIRECTS + 1):
         parts = urlparse(current)
         if parts.scheme not in ("http", "https") or not parts.hostname:
-            raise ValidationError(f"Only http(s) URLs can be fetched: {current!r}")
+            raise ValidationError(f"only http(s) URLs can be fetched: {current!r}")
         if parts.username or parts.password:
             raise ValidationError("URLs with embedded credentials are not allowed")
         try:
             port = parts.port or (443 if parts.scheme == "https" else 80)
         except ValueError as exc:
-            raise ValidationError(f"Invalid URL port: {current!r}") from exc
+            raise ValidationError(f"invalid URL port: {current!r}") from exc
         addresses = _resolve_public(parts.hostname, port, policy)
         target = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
         conn = _open_connection(parts.scheme, parts.hostname, port, addresses, timeout)
@@ -279,23 +277,23 @@ def fetch_url(
                 continue
             return _read_image_body(response, current, max_bytes, deadline)
         except (OSError, http.client.HTTPException) as exc:
-            raise ValidationError(f"Failed to fetch image from URL: {url}") from exc
+            raise ValidationError(f"failed to fetch image from {url}") from exc
         finally:
             conn.close()
-    raise ValidationError(f"Too many redirects (max {MAX_REDIRECTS}) fetching {url}")
+    raise ValidationError(f"too many redirects (max {MAX_REDIRECTS}) fetching {url}")
 
 
 def _read_image_body(
     response: http.client.HTTPResponse, url: str, max_bytes: int, deadline: float
 ) -> bytes:
     if response.status != 200:
-        raise ValidationError(f"Fetching {url} failed with HTTP status {response.status}")
+        raise ValidationError(f"fetching {url} failed with HTTP status {response.status}")
     ctype = (response.getheader("Content-Type") or "").split(";")[0].strip().lower()
     if not ctype.startswith("image/"):
         raise ValidationError(f"URL did not return an image (content type {ctype or 'missing'!r})")
     declared = response.getheader("Content-Length")
     if declared and declared.isdigit() and int(declared) > max_bytes:
-        raise ValidationError(f"Image at {url} exceeds the {max_bytes}-byte limit")
+        raise ValidationError(f"image at {url} exceeds the {max_bytes}-byte limit")
     chunks: list[bytes] = []
     total = 0
     while True:
@@ -304,9 +302,9 @@ def _read_image_body(
             break
         total += len(chunk)
         if total > max_bytes:
-            raise ValidationError(f"Image at {url} exceeds the {max_bytes}-byte limit")
+            raise ValidationError(f"image at {url} exceeds the {max_bytes}-byte limit")
         if time.monotonic() > deadline:
-            raise ValidationError(f"Timed out downloading image from {url}")
+            raise ValidationError(f"timed out downloading image from {url}")
         chunks.append(chunk)
     return b"".join(chunks)
 
@@ -316,7 +314,7 @@ def _image_from_pil(img: PILImage.Image, *, source: str, path: str | Path | None
 
 
 def to_image(image: Any, policy: InputPolicy | None = None) -> Image:
-    """Normalize any supported image input into a decoded `Image`.
+    """Convert any supported image input into a decoded `Image`.
 
     Supported: `Image`, ``str``/``Path`` file paths, ``bytes``, PIL images,
     numpy arrays, and http(s) URL strings (only if ``policy.allow_urls``).
@@ -335,7 +333,7 @@ def to_image(image: Any, policy: InputPolicy | None = None) -> Image:
         elif image.path is not None:
             return to_image(str(image.path), policy)
         else:
-            raise ValidationError("Image has neither `pixels`, `data`, nor `path` set")
+            raise ValidationError("image has neither `pixels`, `data` nor `path` set")
         return image.model_copy(update={"pixels": img, "width": img.width, "height": img.height})
 
     if isinstance(image, bytes | bytearray | memoryview):
@@ -346,8 +344,8 @@ def to_image(image: Any, policy: InputPolicy | None = None) -> Image:
         if isinstance(image, str) and is_url(text):
             if not policy.allow_urls:
                 raise ValidationError(
-                    "URL inputs are disabled. Set Config.inputs.allow_urls=True to opt in, "
-                    "or download the image yourself and pass bytes."
+                    "URL inputs are disabled; set Config.inputs.allow_urls=True "
+                    "or pass the image as bytes"
                 )
             data = fetch_url(
                 text, timeout=policy.url_timeout_seconds, max_bytes=policy.max_bytes, policy=policy
@@ -355,10 +353,10 @@ def to_image(image: Any, policy: InputPolicy | None = None) -> Image:
             return _image_from_pil(decode_image(data, policy), source=text)
         path = Path(image)
         if not path.is_file():
-            raise ValidationError(f"Image file not found: {text}")
+            raise ValidationError(f"image file not found: {text}")
         if path.stat().st_size > policy.max_bytes:
             raise ValidationError(
-                f"Image file is {path.stat().st_size} bytes; the limit is {policy.max_bytes} bytes"
+                f"image file is {path.stat().st_size} bytes, limit is {policy.max_bytes}"
             )
         return _image_from_pil(decode_image(path.read_bytes(), policy), source=text, path=path)
 
@@ -368,13 +366,13 @@ def to_image(image: Any, policy: InputPolicy | None = None) -> Image:
     if type(image).__module__.split(".")[0] == "numpy":
         return _image_from_pil(array_to_image(image, policy), source="<ndarray>")
 
-    raise ValidationError(f"Unsupported image input type: {type(image).__name__}")
+    raise ValidationError(f"unsupported image input type: {type(image).__name__}")
 
 
 def _normalize_pil(img: PILImage.Image, policy: InputPolicy) -> PILImage.Image:
     if img.width * img.height > policy.max_pixels:
         raise ValidationError(
-            f"Image is {img.width}x{img.height} pixels; the limit is {policy.max_pixels}"
+            f"image is {img.width}x{img.height} pixels, limit is {policy.max_pixels}"
         )
     if policy.apply_exif_orientation:
         img = ImageOps.exif_transpose(img) or img
@@ -384,8 +382,8 @@ def _normalize_pil(img: PILImage.Image, policy: InputPolicy) -> PILImage.Image:
 def load_rgb(image: Image, policy: InputPolicy | None = None) -> PILImage.Image:
     """Return the RGB pixels of `image`, decoding them if not yet loaded.
 
-    Backends call this instead of reading ``path``/``data`` themselves, so
-    every backend sees identical, validated, upright pixels.
+    Backends call this instead of reading ``path`` or ``data``, so they all
+    get the same validated pixels.
     """
     if image.pixels is not None:
         pixels: PILImage.Image = image.pixels
@@ -395,7 +393,7 @@ def load_rgb(image: Image, policy: InputPolicy | None = None) -> PILImage.Image:
 
 
 def encode_image(image: Image, *, fmt: str = "JPEG", quality: int = 95) -> bytes:
-    """Encode `image` for transport (e.g. to a remote server). `fmt` is JPEG or PNG."""
+    """Encode `image` as JPEG or PNG bytes for transport."""
     buf = io.BytesIO()
     rgb = load_rgb(image)
     if fmt.upper() == "PNG":

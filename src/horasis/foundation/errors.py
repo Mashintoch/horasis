@@ -20,7 +20,7 @@ class HorasisError(Exception):
 
 
 class ConfigurationError(HorasisError):
-    """Raised when :class:`~horasis.foundation.config.Config` configuration is invalid."""
+    """Raised when configuration is invalid."""
 
 
 class ValidationError(HorasisError):
@@ -28,11 +28,11 @@ class ValidationError(HorasisError):
 
 
 class AccessDeniedError(HorasisError):
-    """Raised by the access layer when a principal lacks permission for an action."""
+    """Raised when a principal may not perform an action."""
 
 
 class QuotaExceededError(AccessDeniedError):
-    """Raised by :class:`~horasis.access.quota.QuotaManager` when a quota is exhausted.
+    """Raised when a quota window is exhausted.
 
     Attributes:
         limit: The limit that was hit.
@@ -87,14 +87,14 @@ class RateLimitedError(AccessDeniedError):
 
 
 class BackendUnavailableError(HorasisError):
-    """Raised when no backend can be resolved for a requested task."""
+    """Raised when a backend cannot serve a request."""
 
 
 class NoBackendError(BackendUnavailableError):
-    """Raised when no registered backend can serve a task.
+    """Raised when no registered backend supports a task.
 
     ``context`` carries ``task``, the ``registered`` backend names and the
-    ``considered`` names that were checked, so callers can explain the gap.
+    ``considered`` names that were checked.
     """
 
 
@@ -103,7 +103,7 @@ class ModelDownloadError(HorasisError):
 
 
 class AdapterError(HorasisError):
-    """Raised when a backend adapter fails to execute inference."""
+    """Raised when a backend fails during inference."""
 
 
 class RemoteError(AdapterError):
@@ -129,7 +129,7 @@ class RemoteError(AdapterError):
 
 
 class VisualizationUnavailableError(HorasisError):
-    """Raised when `horasis.viz` is used without its optional dependency installed."""
+    """Raised when an optional drawing or video dependency is missing."""
 
 
 class PluginError(HorasisError):
@@ -141,10 +141,8 @@ class InvalidApiKeyError(AccessDeniedError):
 
 
 class ExpiredApiKeyError(InvalidApiKeyError):
-    """Raised when an API key existed but has passed its expiry time."""
+    """Raised when an API key has expired."""
 
 
 class RevokedApiKeyError(InvalidApiKeyError):
-    """Raised when an API key was explicitly revoked, as opposed to simply
-    never having existed or having expired.
-    """
+    """Raised when an API key has been revoked."""

@@ -1,10 +1,6 @@
-"""Layer 1 -- Foundation.
+"""Layer 1: configuration, errors, result schemas and telemetry.
 
-The foundation layer has no dependencies on any other `horasis` layer.
-It defines configuration (:class:`~horasis.foundation.config.Config`), the
-exception hierarchy (:mod:`~horasis.foundation.errors`), result schemas
-(:mod:`~horasis.foundation.schemas`), and telemetry hooks
-(:mod:`~horasis.foundation.telemetry`) that every other layer builds on.
+Imports nothing from the other `horasis` layers.
 """
 
 from horasis.foundation.config import Config, InputPolicy, QuotaRule, TierRule

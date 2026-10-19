@@ -77,7 +77,7 @@ def test_bad_array_shapes_rejected(shape: tuple[int, ...]) -> None:
 
 
 def test_unsupported_type_rejected() -> None:
-    with pytest.raises(ValidationError, match="Unsupported"):
+    with pytest.raises(ValidationError, match="unsupported"):
         to_image(12345)
 
 
